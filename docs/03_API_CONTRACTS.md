@@ -57,6 +57,7 @@
 | GET | `/profile` | Получить профиль | Да |
 | PUT | `/profile` | Обновить профиль | Да |
 | POST | `/profile/convert-resume` | Запустить сокращение резюме через LLM | Да |
+| POST | `/profile/compress-resume` | Алиас `convert-resume` («Compress Resume») | Да |
 
 **PUT /profile** (частичное обновление поддерживается)
 ```json

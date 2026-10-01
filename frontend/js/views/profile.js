@@ -207,7 +207,20 @@ async function convertResume() {
   }
   setConvertLoading(true);
   try {
-    await api.convertResume();
+    const result = await api.convertResume();
+
+    // Синхронный результат (LLM ответил в рамках запроса) → сразу обновляем UI.
+    const compact = result?.compact_resume;
+    if (typeof compact === 'string' && compact.trim()) {
+      const merged = { ...getState().profile, ...result };
+      setState({ profile: merged });
+      fillForm(merged);
+      setConvertLoading(false);
+      popup.success('Резюме сжато', `compact_resume: ${charCount(compact)} симв.`);
+      return;
+    }
+
+    // Асинхронный сценарий (задача convert_resume ушла в очередь LLM).
     awaitingConvert = true;
     popup.info('Задача создана', 'Сокращение резюме поставлено в очередь LLM (convert_resume).');
     // Страховка: если WS-событие не придёт, обновим профиль через 45 секунд.

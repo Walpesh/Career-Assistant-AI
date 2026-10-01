@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     # --- LLM (docs/05_LLM_PIPELINE.md) ---
     ollama_base_url: str = "http://localhost:11434"
     llm_model: str = "qwen2.5:7b"
+    llm_timeout_seconds: float = 120.0
+    # Максимальный объём compact_resume (TASK: «не более 1000 символов»;
+    # docs/05 §3 рекомендует 1800–2200 — лимит настраивается через env).
+    compact_resume_max_chars: int = 1000
 
     @property
     def cors_origin_list(self) -> list[str]:

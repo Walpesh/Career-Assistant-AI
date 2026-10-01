@@ -86,12 +86,18 @@ export const api = {
 
   me: () => request('GET', '/auth/me'),
 
-  refresh: () => request('POST', '/auth/refresh', { refresh_token: session.refreshToken }, { skipAuth: true }),
+  refresh: async () => {
+    const data = await request('POST', '/auth/refresh', { refresh_token: session.refreshToken }, { skipAuth: true });
+    // Ротация: сохраняем новую пару токенов.
+    if (data?.access_token) session.setTokens({ access_token: data.access_token, refresh_token: data.refresh_token });
+    return data;
+  },
 
   /* --- Profile --- */
   getProfile: () => request('GET', '/profile'),
   updateProfile: (patch) => request('PUT', '/profile', patch),
   convertResume: () => request('POST', '/profile/convert-resume'),
+  compressResume: () => request('POST', '/profile/compress-resume'),
 
   /* --- Parsing (3 режима) --- */
   parseAuto: (payload) => request('POST', '/parsing/auto', payload),

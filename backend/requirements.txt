@@ -13,9 +13,9 @@ redis>=5.0
 arq>=0.26
 
 
-# Auth
+# Auth (docs/03 §2: JWT + bcrypt)
 python-jose[cryptography]>=3.3
-passlib[bcrypt]>=1.7
+bcrypt>=4.2
 
 # HTTP / parsing (docs/04_PARSING_RULES.md)
 httpx>=0.27
@@ -24,3 +24,7 @@ playwright>=1.45
 playwright-stealth>=1.0.6
 patchright>=1.45
 nodriver>=0.34
+
+# Tests (интеграционные: backend/tests)
+pytest>=8.0
+pytest-asyncio>=0.24
