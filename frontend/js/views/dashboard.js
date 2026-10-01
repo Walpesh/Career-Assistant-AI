@@ -5,7 +5,7 @@
    ============================================================ */
 
 import { api } from '../core/api.js';
-import { subscribe } from '../core/state.js';
+import { getState, subscribe } from '../core/state.js';
 import { loadPartial } from '../core/partials.js';
 import { popup } from '../components/fadeout-action-popup.js';
 import { TagInput } from '../components/tag-input.js';
@@ -21,6 +21,7 @@ const HH_VACANCY_URL = /^https?:\/\/([\w-]+\.)*hh\.ru\/vacancy\/\d+/i;
 let els = {};
 let keywordsInput = null;
 let mounted = false;
+let thresholdTouched = false;
 const cardMap = new Map();
 
 export async function mount() {
@@ -57,6 +58,7 @@ export async function mount() {
   setMode('auto');
 
   els.autoThreshold.addEventListener('input', () => {
+    thresholdTouched = true;
     els.autoThresholdValue.textContent = `${els.autoThreshold.value}%`;
   });
 
@@ -66,8 +68,23 @@ export async function mount() {
   els.refreshButton.addEventListener('click', () => refreshTasks());
   els.list.addEventListener('click', handleTaskListClick);
 
-  subscribe(() => renderTasks());
+  // Порог матчинга по умолчанию берётся из профиля (docs/02 §3.2).
+  applyProfileThreshold(getState());
+  subscribe((state) => {
+    applyProfileThreshold(state);
+    renderTasks();
+  });
   await refreshTasks();
+}
+
+/** Подставить match_threshold из профиля, пока пользователь не менял слайдер. */
+function applyProfileThreshold(state) {
+  if (thresholdTouched) return;
+  const threshold = Number(state?.profile?.match_threshold);
+  if (Number.isFinite(threshold) && threshold >= 0) {
+    els.autoThreshold.value = clamp(threshold, 0, 100);
+    els.autoThresholdValue.textContent = `${els.autoThreshold.value}%`;
+  }
 }
 
 /* ---------- Режимы ---------- */

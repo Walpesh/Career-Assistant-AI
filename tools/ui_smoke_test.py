@@ -55,6 +55,20 @@ def start_server() -> http.server.ThreadingHTTPServer:
     return server
 
 
+def screenshot(page, name: str) -> None:
+    """Скриншот с ретраем: OneDrive может блокировать перезапись файла."""
+    target = ARTIFACTS / f"{name}.png"
+    try:
+        page.screenshot(path=str(target))
+    except OSError:
+        fallback = ARTIFACTS / f"{name}-{int(time.time())}.png"
+        try:
+            page.screenshot(path=str(fallback))
+            print(f"    (скриншот сохранён как {fallback.name}: исходный файл занят)")
+        except OSError as error:
+            print(f"    (скриншот {name} пропущен: {error})")
+
+
 def run_checks() -> int:
     failures: list[str] = []
     console_errors: list[str] = []
@@ -99,7 +113,7 @@ def run_checks() -> int:
         check(True, "Автопоиск запущен, карточка задачи появилась")
         page.wait_for_selector(".fap-item", timeout=15000)
         check(page.locator(".fap-item").count() >= 1, "Fadeout-action-popup показан после действия")
-        page.screenshot(path=str(ARTIFACTS / "desktop-dashboard.png"))
+        screenshot(page, "desktop-dashboard")
 
         # Вкладка анализа.
         page.click('[data-tab="analysis"]')
@@ -131,7 +145,7 @@ def run_checks() -> int:
         # Журнал реал-тайм: появились записи о событиях.
         log_entries = page.locator("#log-list .log-entry").count()
         check(log_entries >= 1, f"Журнал реал-тайм получает события ({log_entries} записей)")
-        page.screenshot(path=str(ARTIFACTS / "desktop-analysis.png"))
+        screenshot(page, "desktop-analysis")
 
         # Вкладка профиля + convert_resume -> popup.
         page.click('[data-tab="profile"]')
@@ -146,7 +160,7 @@ def run_checks() -> int:
         page.click("#btn-convert-resume")
         page.wait_for_selector(".fap-item", timeout=10000)
         check(True, "Уведомление о запуске convert_resume показано")
-        page.screenshot(path=str(ARTIFACTS / "desktop-profile.png"))
+        screenshot(page, "desktop-profile")
         context.close()
         return finish(browser, failures, console_errors)
 
@@ -168,7 +182,7 @@ def finish(browser, failures: list[str], console_errors: list[str]) -> int:
     mpage.click('nav[aria-label="Мобильная навигация"] [data-tab="analysis"]')
     mpage.wait_for_selector("#view-analysis [data-vacancy-id]", timeout=15000)
     print("[OK  ] Мобильная версия вкладки «Анализ и отклик» рендерится")
-    mpage.screenshot(path=str(ARTIFACTS / "mobile-analysis.png"))
+    screenshot(mpage, "mobile-analysis")
     mobile.close()
     browser.close()
 
