@@ -1,0 +1,181 @@
+/* ============================================================
+   Career-Assistant-AI — кастомные стили поверх Tailwind (Play CDN).
+   Компонентные классы: см. <style type="text/tailwindcss"> в index.html.
+   ============================================================ */
+
+:root { color-scheme: dark; }
+
+/* ---------- Fadeout-action-popup (кастомный компонент) ---------- */
+fadeout-action-popup {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+  width: 22.5rem;
+  max-width: calc(100vw - 2rem);
+  pointer-events: none;
+}
+
+.fap-item {
+  pointer-events: auto;
+  position: relative;
+  overflow: hidden;
+  border-radius: 0.75rem;
+  border: 1px solid rgb(51 65 85 / 0.8);
+  background: rgb(15 23 42 / 0.97);
+  padding: 0.875rem 1rem 0.875rem 1.125rem;
+  box-shadow: 0 24px 50px -24px rgb(0 0 0 / 0.85);
+  backdrop-filter: blur(8px);
+  animation: fap-in 0.28s cubic-bezier(0.21, 1.02, 0.73, 1) both;
+}
+.fap-item.fap-leaving { animation: fap-out 0.3s ease forwards; pointer-events: none; }
+
+.fap-accent { position: absolute; left: 0; top: 0; height: 100%; width: 0.25rem; }
+.fap-progress {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  width: 100%;
+  background: currentColor;
+  opacity: 0.4;
+  animation-name: fap-shrink;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+.fap-item:hover .fap-progress { animation-play-state: paused; }
+
+@keyframes fap-in {
+  from { opacity: 0; transform: translateX(18px) scale(0.97); }
+  to   { opacity: 1; transform: translateX(0) scale(1); }
+}
+@keyframes fap-out {
+  to { opacity: 0; transform: translateX(26px) scale(0.96); }
+}
+@keyframes fap-shrink {
+  from { width: 100%; }
+  to   { width: 0%; }
+}
+
+@media (max-width: 640px) {
+  fadeout-action-popup { left: 1rem; right: 1rem; width: auto; }
+}
+
+/* ---------- Пульсирующие индикаторы ---------- */
+.pulse-dot { animation: pulse-dot 1.6s ease-in-out infinite; }
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgb(129 140 248 / 0.5); }
+  50%      { opacity: 0.55; box-shadow: 0 0 0 5px rgb(129 140 248 / 0); }
+}
+
+/* ---------- Скроллбары ---------- */
+.scroll-slim { scrollbar-width: thin; scrollbar-color: #334155 transparent; }
+.scroll-slim::-webkit-scrollbar { width: 8px; height: 8px; }
+.scroll-slim::-webkit-scrollbar-thumb { background: #334155; border-radius: 8px; }
+.scroll-slim::-webkit-scrollbar-thumb:hover { background: #475569; }
+.scroll-slim::-webkit-scrollbar-track { background: transparent; }
+
+/* ---------- Прогресс-бары задач ---------- */
+.progress-track {
+  position: relative;
+  height: 0.5rem;
+  border-radius: 9999px;
+  background: rgb(30 41 59 / 0.9);
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  border-radius: 9999px;
+  background: linear-gradient(90deg, #6366f1, #8b5cf6);
+  transition: width 0.4s ease;
+}
+.progress-fill.is-striped {
+  background-image:
+    repeating-linear-gradient(45deg, rgb(255 255 255 / 0.22) 0 6px, transparent 6px 12px),
+    linear-gradient(90deg, #6366f1, #8b5cf6);
+  background-size: 17px 17px, 100% 100%;
+  animation: stripes-move 0.9s linear infinite;
+}
+@keyframes stripes-move {
+  from { background-position: 0 0, 0 0; }
+  to   { background-position: 17px 0, 0 0; }
+}
+
+/* ---------- Мобильная навигация ---------- */
+.mobile-nav-btn.active { color: #a5b4fc; }
+
+/* ---------- Журнал реал-тайм ---------- */
+.log-entry {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 0.5rem;
+  align-items: start;
+  padding: 0.25rem 0.375rem;
+  border-radius: 0.5rem;
+}
+.log-entry:hover { background: rgb(30 41 59 / 0.45); }
+.log-time { color: #64748b; white-space: nowrap; }
+.log-dot { margin-top: 0.35rem; width: 0.375rem; height: 0.375rem; border-radius: 9999px; background: #64748b; }
+.log-entry[data-level="success"] .log-dot { background: #34d399; }
+.log-entry[data-level="warning"] .log-dot { background: #fbbf24; }
+.log-entry[data-level="error"]   .log-dot { background: #fb7185; }
+.log-entry[data-level="success"] .log-msg { color: #a7f3d0; }
+.log-entry[data-level="warning"] .log-msg { color: #fde68a; }
+.log-entry[data-level="error"]   .log-msg { color: #fda4af; }
+.log-msg { color: #cbd5e1; word-break: break-word; }
+
+/* ---------- Tag input ---------- */
+.tag-input-root {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.375rem;
+  min-height: 2.75rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 0.5rem;
+  border: 1px solid rgb(51 65 85 / 0.8);
+  background: rgb(2 6 23 / 0.7);
+  cursor: text;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.tag-input-root:focus-within { border-color: #6366f1; box-shadow: 0 0 0 3px rgb(99 102 241 / 0.15); }
+.tag-input-root input {
+  flex: 1 1 8rem;
+  min-width: 8rem;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  color: #f1f5f9;
+  font-size: 0.875rem;
+  padding: 0.125rem 0.25rem;
+}
+.tag-input-root input::placeholder { color: #475569; }
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  border-radius: 9999px;
+  border: 1px solid rgb(99 102 241 / 0.35);
+  background: rgb(99 102 241 / 0.12);
+  color: #c7d2fe;
+  padding: 0.125rem 0.5rem 0.125rem 0.625rem;
+  font-size: 0.75rem;
+  line-height: 1.25rem;
+}
+.tag-chip button { color: #818cf8; font-size: 0.8rem; line-height: 1; }
+.tag-chip button:hover { color: #e0e7ff; }
+
+/* ---------- Оверлеи (модалки/drawer): управление через data-open ---------- */
+.overlay[data-open="0"] { display: none !important; }
+
+/* ---------- Прочее ---------- */
+.is-hidden { display: none !important; }
+[data-spinner].is-visible { display: inline-block !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  .fap-item, .fap-progress, .pulse-dot, .progress-fill.is-striped { animation: none !important; }
+  .progress-fill { transition: none; }
+}

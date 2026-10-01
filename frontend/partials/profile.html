@@ -1,0 +1,136 @@
+<div class="animate-fade-in space-y-6">
+
+  <header>
+    <h2 class="text-xl font-bold">Моё резюме</h2>
+    <p class="mt-1 text-sm text-slate-400">
+      Полное резюме, сжатая LLM-версия <span class="font-mono text-xs text-slate-500">compact_resume</span>
+      и настройки матчинга. Все данные привязаны к вашему аккаунту.
+    </p>
+  </header>
+
+  <!-- Личные данные -->
+  <section class="card p-5">
+    <h3 class="card-title mb-4">Личные данные</h3>
+    <div class="grid gap-4 sm:grid-cols-2">
+      <div>
+        <label for="profile-full-name" class="mb-1.5 block text-xs font-medium text-slate-400">Полное имя</label>
+        <input id="profile-full-name" type="text" class="input" placeholder="Иван Иванов" maxlength="255" />
+      </div>
+      <div>
+        <label for="profile-email" class="mb-1.5 block text-xs font-medium text-slate-400">Email аккаунта</label>
+        <input id="profile-email" type="email" class="input" disabled value="—" />
+      </div>
+    </div>
+  </section>
+
+  <!-- Резюме -->
+  <section class="card p-5">
+    <div class="mb-4 flex items-center justify-between gap-3">
+      <h3 class="card-title">Резюме</h3>
+      <span id="resume-counter" class="text-xs tabular-nums text-slate-500">0 / 5000</span>
+    </div>
+    <textarea id="profile-resume" rows="12" maxlength="5000" class="input resize-y"
+              placeholder="Вставьте полный текст резюме — опыт, стек, достижения…"></textarea>
+    <p class="hint mt-2">
+      Полный текст используется только при конвертации. В LLM-анализ передаётся compact-версия —
+      это экономит контекст модели (docs/05_LLM_PIPELINE.md).
+    </p>
+
+    <div class="mt-5 rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div class="flex items-center gap-2">
+          <h4 class="text-sm font-semibold text-slate-200">Сокращённое резюме</h4>
+          <span id="compact-meta" class="text-xs text-slate-500">не создано</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <button id="btn-copy-compact" type="button" class="btn-ghost btn-sm" disabled>Копировать</button>
+          <button id="btn-convert-resume" type="button" class="btn-secondary btn-sm">
+            <span class="hidden h-3.5 w-3.5 animate-spin rounded-full border-2 border-indigo-300/30 border-t-indigo-300" data-spinner></span>
+            <span>Конвертировать резюме</span>
+          </button>
+        </div>
+      </div>
+      <div id="compact-resume-view"
+           class="scroll-slim mt-3 max-h-64 overflow-y-auto whitespace-pre-wrap rounded-lg bg-slate-900/70 p-3 text-sm leading-relaxed text-slate-300">
+        — ещё не создано —
+      </div>
+      <p class="hint mt-2">
+        Запускает задачу <span class="font-mono">convert_resume</span> в строгой очереди LLM.
+        Рекомендуемый объём результата — 1800–2200 символов.
+      </p>
+    </div>
+  </section>
+
+  <!-- Навыки -->
+  <section class="card p-5">
+    <h3 class="card-title mb-4">Навыки</h3>
+    <div id="profile-skills" data-placeholder="Добавьте навык и нажмите Enter…"></div>
+    <p class="hint mt-2">Enter, запятая или точка с запятой — добавить. Backspace в пустом поле — удалить последний.</p>
+  </section>
+
+  <!-- Опыт и зарплата -->
+  <section class="card p-5">
+    <h3 class="card-title mb-4">Опыт и зарплатные ожидания</h3>
+    <div class="grid gap-4 sm:grid-cols-3">
+      <div>
+        <label for="profile-experience" class="mb-1.5 block text-xs font-medium text-slate-400">Опыт, лет</label>
+        <input id="profile-experience" type="number" class="input" min="0" max="60" step="0.5" placeholder="4.5" />
+      </div>
+      <div>
+        <label for="profile-salary-from" class="mb-1.5 block text-xs font-medium text-slate-400">Зарплата от, ₽</label>
+        <input id="profile-salary-from" type="number" class="input" min="0" step="1000" placeholder="180000" />
+      </div>
+      <div>
+        <label for="profile-salary-to" class="mb-1.5 block text-xs font-medium text-slate-400">Зарплата до, ₽</label>
+        <input id="profile-salary-to" type="number" class="input" min="0" step="1000" placeholder="250000" />
+      </div>
+    </div>
+  </section>
+
+  <!-- Матчинг -->
+  <section class="card p-5">
+    <h3 class="card-title mb-4">Порог матчинга</h3>
+    <div class="flex items-center gap-4">
+      <input id="profile-threshold" type="range" min="0" max="100" step="1" value="70"
+             class="h-2 w-full cursor-pointer accent-indigo-500" />
+      <output id="profile-threshold-value"
+              class="inline-flex min-w-[3.5rem] items-center justify-center rounded-lg border border-indigo-500/40 bg-indigo-500/10 px-2 py-1 text-sm font-bold tabular-nums text-indigo-200">
+        70%
+      </output>
+    </div>
+    <p class="hint mt-2">
+      В режиме <span class="font-mono">AUTO</span> сопроводительное письмо создаётся, только если
+      match_score ≥ порога. Для остальных режимов порог — справочный.
+    </p>
+
+    <fieldset class="mt-5">
+      <legend class="mb-2 text-xs font-medium text-slate-400">Предпочитаемые форматы работы</legend>
+      <div class="flex flex-wrap gap-2">
+        <label class="chip has-[:checked]:border-indigo-500/60 has-[:checked]:bg-indigo-500/15 has-[:checked]:text-indigo-200">
+          <input type="checkbox" name="work-format" value="remote" class="peer sr-only" />
+          Удалённо
+        </label>
+        <label class="chip has-[:checked]:border-indigo-500/60 has-[:checked]:bg-indigo-500/15 has-[:checked]:text-indigo-200">
+          <input type="checkbox" name="work-format" value="hybrid" class="peer sr-only" />
+          Гибрид
+        </label>
+        <label class="chip has-[:checked]:border-indigo-500/60 has-[:checked]:bg-indigo-500/15 has-[:checked]:text-indigo-200">
+          <input type="checkbox" name="work-format" value="onsite" class="peer sr-only" />
+          Офис
+        </label>
+      </div>
+    </fieldset>
+  </section>
+
+  <!-- Панель сохранения -->
+  <div class="sticky bottom-20 z-10 lg:bottom-4">
+    <div class="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-800 bg-slate-900/95 p-3 shadow-2xl backdrop-blur">
+      <button id="btn-save-profile" type="button" class="btn-primary">
+        <span class="hidden h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" data-spinner></span>
+        <span>Сохранить профиль</span>
+      </button>
+      <button id="btn-reset-profile" type="button" class="btn-ghost">Сбросить изменения</button>
+      <span id="profile-saved-at" class="ml-auto text-xs text-slate-500">—</span>
+    </div>
+  </div>
+</div>

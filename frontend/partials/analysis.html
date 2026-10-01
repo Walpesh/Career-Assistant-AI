@@ -1,0 +1,101 @@
+<div class="animate-fade-in space-y-5">
+
+  <header class="flex flex-wrap items-start justify-between gap-3">
+    <div>
+      <h2 class="text-xl font-bold">Анализ и отклик</h2>
+      <p class="mt-1 text-sm text-slate-400">Все вакансии пользователя: статусы, match_score, сопроводительные письма и массовая обработка.</p>
+    </div>
+    <button id="btn-refresh-vacancies" type="button" class="btn-secondary btn-sm">Обновить</button>
+  </header>
+
+  <!-- Статусы -->
+  <div id="status-filters" class="flex flex-wrap gap-2" role="group" aria-label="Фильтр по статусу">
+    <button type="button" data-status="" class="chip chip-active">Все</button>
+    <button type="button" data-status="raw" class="chip">Новые</button>
+    <button type="button" data-status="analyzed" class="chip">Проанализированы</button>
+    <button type="button" data-status="letter_ready" class="chip">Письмо готово</button>
+    <button type="button" data-status="applied" class="chip">Откликнулся</button>
+    <button type="button" data-status="error" class="chip">Ошибка</button>
+  </div>
+
+  <!-- Фильтры -->
+  <div class="card grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
+    <div>
+      <label for="filter-search" class="mb-1.5 block text-xs font-medium text-slate-400">Поиск</label>
+      <input id="filter-search" type="search" class="input" placeholder="Название или компания" />
+    </div>
+    <div>
+      <label for="filter-source" class="mb-1.5 block text-xs font-medium text-slate-400">Источник</label>
+      <select id="filter-source" class="select">
+        <option value="">Все источники</option>
+        <option value="auto">Автопоиск</option>
+        <option value="group">Групповой парсер</option>
+        <option value="manual">Ручное добавление</option>
+      </select>
+    </div>
+    <div>
+      <label for="filter-score" class="mb-1.5 block text-xs font-medium text-slate-400">Мин. match_score, %</label>
+      <input id="filter-score" type="number" class="input" min="0" max="100" step="1" placeholder="например 60" />
+    </div>
+    <div>
+      <label for="filter-size" class="mb-1.5 block text-xs font-medium text-slate-400">На странице</label>
+      <select id="filter-size" class="select">
+        <option value="10">10</option>
+        <option value="20" selected>20</option>
+        <option value="50">50</option>
+      </select>
+    </div>
+    <div class="sm:col-span-2 lg:col-span-4">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <label class="flex cursor-pointer items-center gap-2 text-xs text-slate-400">
+          <input id="select-all" type="checkbox" class="h-4 w-4 rounded border-slate-600 bg-slate-900 accent-indigo-500" />
+          Выбрать все на странице
+        </label>
+        <button id="btn-reset-filters" type="button" class="btn-ghost btn-sm">Сбросить фильтры</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Панель массовых действий -->
+  <div id="batch-bar" class="sticky top-2 z-20 hidden">
+    <div class="flex flex-wrap items-center gap-3 rounded-2xl border border-indigo-500/30 bg-slate-900/95 p-3 shadow-glow backdrop-blur">
+      <span class="text-sm text-slate-300">Выбрано: <b id="selected-count" class="text-indigo-300">0</b></span>
+      <select id="batch-mode" class="select max-w-[16rem]" aria-label="Режим обработки">
+        <option value="auto">AUTO: анализ → порог → письмо</option>
+        <option value="analyze">Только анализ</option>
+        <option value="letter">Только письмо</option>
+        <option value="analyze_and_letter">Анализ + письмо</option>
+      </select>
+      <input id="batch-threshold" type="number" class="input max-w-[13rem]" min="0" max="100" step="1"
+             placeholder="Порог, % (из профиля)" title="Переопределяет порог из профиля для режима AUTO" />
+      <button id="btn-run-batch" type="button" class="btn-primary btn-sm">
+        <span class="hidden h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" data-spinner></span>
+        <span>Запустить обработку</span>
+      </button>
+      <button id="btn-clear-selection" type="button" class="btn-ghost btn-sm">Снять выбор</button>
+    </div>
+  </div>
+
+  <!-- Скелетон загрузки -->
+  <div id="vacancy-skeleton" class="hidden space-y-3">
+    <div class="skeleton h-24"></div>
+    <div class="skeleton h-24"></div>
+    <div class="skeleton h-24"></div>
+  </div>
+
+  <!-- Список вакансий -->
+  <div id="vacancy-list" class="space-y-3"></div>
+
+  <div id="vacancy-empty" class="hidden rounded-2xl border border-dashed border-slate-800 p-10 text-center">
+    <p class="text-sm text-slate-400">Вакансий по выбранным фильтрам нет.</p>
+    <p class="hint mt-1">Запустите парсинг — вакансии появятся здесь автоматически по событиям WebSocket.</p>
+    <button type="button" data-action="goto-dashboard" class="btn-primary btn-sm mt-4">Перейти в парсинг-дашборд</button>
+  </div>
+
+  <!-- Пагинация -->
+  <div class="flex items-center justify-between gap-3 pt-1">
+    <button id="btn-prev-page" type="button" class="btn-ghost btn-sm" disabled>← Назад</button>
+    <span id="page-info" class="text-xs text-slate-400">Страница 1</span>
+    <button id="btn-next-page" type="button" class="btn-ghost btn-sm" disabled>Вперёд →</button>
+  </div>
+</div>

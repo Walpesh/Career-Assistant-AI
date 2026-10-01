@@ -1,0 +1,156 @@
+<div class="animate-fade-in space-y-6">
+
+  <header>
+    <h2 class="text-xl font-bold">Парсинг вакансий</h2>
+    <p class="mt-1 text-sm text-slate-400">Три режима сбора: Автопоиск, Групповой парсер и Ручное добавление одной вакансии.</p>
+    <div class="mt-3 flex flex-wrap gap-2 text-xs">
+      <span class="badge border-slate-700 bg-slate-800/60 text-slate-400">≤ 2 парсинг-воркера</span>
+      <span class="badge border-slate-700 bg-slate-800/60 text-slate-400">60–80 запросов / IP</span>
+      <span class="badge border-slate-700 bg-slate-800/60 text-slate-400">задержка 4–8 сек</span>
+      <span class="badge border-slate-700 bg-slate-800/60 text-slate-400">300–500 вакансий / сутки</span>
+    </div>
+  </header>
+
+  <!-- Выбор режима -->
+  <div id="parsing-modes" class="grid gap-2 sm:grid-cols-3" role="tablist" aria-label="Режим парсинга">
+    <button type="button" data-mode="auto" class="mode-card" role="tab">
+      <svg class="mt-0.5 h-6 w-6 shrink-0 text-indigo-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M9 3.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11zM2 9a7 7 0 1 1 12.45 4.39l3.33 3.33-1.06 1.06-3.33-3.33A7 7 0 0 1 2 9z"/></svg>
+      <span>
+        <span class="block text-sm font-semibold text-slate-100">Автопоиск</span>
+        <span class="mt-0.5 block text-xs text-slate-400">Ключевые слова + фильтры hh.ru</span>
+      </span>
+    </button>
+    <button type="button" data-mode="group" class="mode-card" role="tab">
+      <svg class="mt-0.5 h-6 w-6 shrink-0 text-violet-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M6 2h8a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm1.5 4h5v1.5h-5V6zm0 3.5h5V11h-5V9.5zm0 3.5h3v1.5h-3V13z"/></svg>
+      <span>
+        <span class="block text-sm font-semibold text-slate-100">Групповой парсер</span>
+        <span class="mt-0.5 block text-xs text-slate-400">Готовая ссылка результатов поиска</span>
+      </span>
+    </button>
+    <button type="button" data-mode="manual" class="mode-card" role="tab">
+      <svg class="mt-0.5 h-6 w-6 shrink-0 text-emerald-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M10 3a1 1 0 0 1 1 1v5h5a1 1 0 1 1 0 2h-5v5a1 1 0 1 1-2 0v-5H4a1 1 0 1 1 0-2h5V4a1 1 0 0 1 1-1z"/></svg>
+      <span>
+        <span class="block text-sm font-semibold text-slate-100">Ручное добавление</span>
+        <span class="mt-0.5 block text-xs text-slate-400">Прямая ссылка на вакансию</span>
+      </span>
+    </button>
+  </div>
+
+  <!-- Панель: Автопоиск -->
+  <section data-mode-panel="auto" class="card p-5">
+    <h3 class="card-title mb-4">Автопоиск по ключевым словам</h3>
+
+    <label class="mb-1.5 block text-xs font-medium text-slate-400">Ключевые слова *</label>
+    <div id="auto-keywords" data-placeholder="например: python, fastapi, backend — Enter"></div>
+
+    <div class="mt-5 grid gap-5 lg:grid-cols-2">
+      <fieldset data-chip-group="employment">
+        <legend class="mb-2 text-xs font-medium text-slate-400">Форма занятости</legend>
+        <div class="flex flex-wrap gap-2">
+          <label class="chip has-[:checked]:border-indigo-500/60 has-[:checked]:bg-indigo-500/15 has-[:checked]:text-indigo-200"><input type="checkbox" value="full" class="sr-only" checked />Полная</label>
+          <label class="chip has-[:checked]:border-indigo-500/60 has-[:checked]:bg-indigo-500/15 has-[:checked]:text-indigo-200"><input type="checkbox" value="part" class="sr-only" />Частичная</label>
+          <label class="chip has-[:checked]:border-indigo-500/60 has-[:checked]:bg-indigo-500/15 has-[:checked]:text-indigo-200"><input type="checkbox" value="project" class="sr-only" />Проектная</label>
+          <label class="chip has-[:checked]:border-indigo-500/60 has-[:checked]:bg-indigo-500/15 has-[:checked]:text-indigo-200"><input type="checkbox" value="volunteer" class="sr-only" />Волонтёрство</label>
+          <label class="chip has-[:checked]:border-indigo-500/60 has-[:checked]:bg-indigo-500/15 has-[:checked]:text-indigo-200"><input type="checkbox" value="probation" class="sr-only" />Стажировка</label>
+          <label class="chip has-[:checked]:border-indigo-500/60 has-[:checked]:bg-indigo-500/15 has-[:checked]:text-indigo-200"><input type="checkbox" value="gph" class="sr-only" />ГПХ</label>
+        </div>
+      </fieldset>
+
+      <fieldset data-chip-group="work_format">
+        <legend class="mb-2 text-xs font-medium text-slate-400">Формат работы</legend>
+        <div class="flex flex-wrap gap-2">
+          <label class="chip has-[:checked]:border-indigo-500/60 has-[:checked]:bg-indigo-500/15 has-[:checked]:text-indigo-200"><input type="checkbox" value="remote" class="sr-only" />Удалённо</label>
+          <label class="chip has-[:checked]:border-indigo-500/60 has-[:checked]:bg-indigo-500/15 has-[:checked]:text-indigo-200"><input type="checkbox" value="hybrid" class="sr-only" />Гибрид</label>
+          <label class="chip has-[:checked]:border-indigo-500/60 has-[:checked]:bg-indigo-500/15 has-[:checked]:text-indigo-200"><input type="checkbox" value="onsite" class="sr-only" />Офис</label>
+        </div>
+      </fieldset>
+    </div>
+
+      <fieldset data-chip-group="schedule">
+        <legend class="mb-2 text-xs font-medium text-slate-400">График работы</legend>
+        <div class="flex flex-wrap gap-2">
+          <label class="chip has-[:checked]:border-indigo-500/60 has-[:checked]:bg-indigo-500/15 has-[:checked]:text-indigo-200"><input type="checkbox" value="fullDay" class="sr-only" checked />Полный день</label>
+          <label class="chip has-[:checked]:border-indigo-500/60 has-[:checked]:bg-indigo-500/15 has-[:checked]:text-indigo-200"><input type="checkbox" value="shift" class="sr-only" />Сменный</label>
+          <label class="chip has-[:checked]:border-indigo-500/60 has-[:checked]:bg-indigo-500/15 has-[:checked]:text-indigo-200"><input type="checkbox" value="flexible" class="sr-only" />Гибкий</label>
+          <label class="chip has-[:checked]:border-indigo-500/60 has-[:checked]:bg-indigo-500/15 has-[:checked]:text-indigo-200"><input type="checkbox" value="flyInFlyOut" class="sr-only" />Вахта</label>
+        </div>
+      </fieldset>
+
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label for="auto-threshold" class="mb-1.5 block text-xs font-medium text-slate-400">
+            Порог матчинга: <output id="auto-threshold-value" class="font-bold text-indigo-300">70%</output>
+          </label>
+          <input id="auto-threshold" type="range" min="0" max="100" step="1" value="70" class="h-2 w-full cursor-pointer accent-indigo-500" />
+          <p class="hint mt-1">По умолчанию — из профиля.</p>
+        </div>
+        <div>
+          <label for="auto-max-pages" class="mb-1.5 block text-xs font-medium text-slate-400">Страниц поиска (макс.)</label>
+          <input id="auto-max-pages" type="number" class="input" min="1" max="10" step="1" value="3" />
+          <p class="hint mt-1">Ограничивает глубину обхода результатов.</p>
+        </div>
+      </div>
+
+    <div class="mt-6 flex flex-wrap items-center gap-3">
+      <button id="btn-parse-auto" type="button" class="btn-primary">
+        <span class="hidden h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" data-spinner></span>
+        <span>Запустить автопоиск</span>
+      </button>
+      <p class="hint">Приоритет очереди: ручное → групповой → автопоиск (docs/04_PARSING_RULES.md).</p>
+    </div>
+  </section>
+
+  <!-- Панель: Групповой парсер -->
+  <section data-mode-panel="group" class="card hidden p-5">
+    <h3 class="card-title mb-4">Групповой парсер по ссылке поиска</h3>
+    <label for="group-url" class="mb-1.5 block text-xs font-medium text-slate-400">Ссылка на результаты поиска hh.ru *</label>
+    <input id="group-url" type="url" class="input" placeholder="https://novokuznetsk.hh.ru/vacancies/razrabotchik" />
+    <p class="hint mt-2">
+      Скопируйте адрес страницы результатов поиска (вместе с фильтрами — регион, зарплата, опыт).
+      Парсер последовательно обойдёт страницы пагинации в пределах лимита.
+    </p>
+    <div class="mt-4 max-w-[12rem]">
+      <label for="group-max-pages" class="mb-1.5 block text-xs font-medium text-slate-400">Страниц (макс.)</label>
+      <input id="group-max-pages" type="number" class="input" min="1" max="10" step="1" value="3" />
+    </div>
+    <div class="mt-6">
+      <button id="btn-parse-group" type="button" class="btn-primary">
+        <span class="hidden h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" data-spinner></span>
+        <span>Запустить групповой парсинг</span>
+      </button>
+    </div>
+  </section>
+
+  <!-- Панель: Ручное добавление -->
+  <section data-mode-panel="manual" class="card hidden p-5">
+    <h3 class="card-title mb-4">Ручное добавление вакансии</h3>
+    <label for="manual-url" class="mb-1.5 block text-xs font-medium text-slate-400">Прямая ссылка на вакансию *</label>
+    <input id="manual-url" type="url" class="input" placeholder="https://novokuznetsk.hh.ru/vacancy/137866214" />
+    <label class="mt-4 flex w-fit cursor-pointer items-center gap-2 text-sm text-slate-300">
+      <input id="manual-run-analysis" type="checkbox" class="h-4 w-4 rounded border-slate-600 bg-slate-900 accent-indigo-500" />
+      Сразу запустить анализ после добавления (режим <span class="font-mono text-xs">analyze</span>)
+    </label>
+    <div class="mt-6">
+      <button id="btn-parse-manual" type="button" class="btn-primary">
+        <span class="hidden h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" data-spinner></span>
+        <span>Добавить вакансию</span>
+      </button>
+    </div>
+  </section>
+
+  <!-- Активные задачи -->
+  <section class="card p-5">
+    <div class="mb-4 flex flex-wrap items-center gap-3">
+      <h3 class="card-title">Задачи</h3>
+      <span id="tasks-count" class="badge border-slate-700 bg-slate-800/60 text-slate-400">0</span>
+      <div class="ml-auto flex items-center gap-2">
+        <button id="btn-refresh-tasks" type="button" class="btn-ghost btn-sm">Обновить</button>
+      </div>
+    </div>
+    <div id="tasks-list" class="space-y-3">
+      <div id="tasks-empty" class="rounded-xl border border-dashed border-slate-800 p-6 text-center text-sm text-slate-500">
+        Задач пока нет. Запустите парсинг или обработку вакансий.
+      </div>
+    </div>
+  </section>
+</div>

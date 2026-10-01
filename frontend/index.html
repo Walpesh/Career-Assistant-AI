@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="ru" class="h-full">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Career-Assistant-AI — парсинг и анализ вакансий hh.ru, генерация сопроводительных писем через LLM" />
+  <title>Career-Assistant-AI</title>
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    /* Базовая тема Tailwind (Play CDN). Палитра: slate + индиго-акцент. */
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'Arial', 'sans-serif']
+          },
+          boxShadow: {
+            'glow': '0 0 0 1px rgba(99,102,241,.35), 0 12px 40px -14px rgba(99,102,241,.55)'
+          },
+          keyframes: {
+            'fade-in': { '0%': { opacity: '0' }, '100%': { opacity: '1' } },
+            'slide-up': { '0%': { opacity: '0', transform: 'translateY(10px)' }, '100%': { opacity: '1', transform: 'translateY(0)' } }
+          },
+          animation: {
+            'fade-in': 'fade-in .25s ease-out both',
+            'slide-up': 'slide-up .25s ease-out both'
+          }
+        }
+      }
+    };
+  </script>
+  <style type="text/tailwindcss">
+    /* Компонентные классы интерфейса (компилируются Play CDN из @apply) */
+    .card { @apply rounded-2xl border border-slate-800/80 bg-slate-900/60; }
+    .card-title { @apply text-sm font-semibold tracking-wide text-slate-200; }
+    .hint { @apply text-xs leading-relaxed text-slate-500; }
+    .input { @apply w-full rounded-lg border border-slate-700/80 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 placeholder-slate-600 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-50; }
+    .select { @apply w-full rounded-lg border border-slate-700/80 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20; }
+    .btn, .btn-primary, .btn-secondary, .btn-ghost, .btn-danger { @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40 disabled:cursor-not-allowed disabled:opacity-50; }
+    .btn-primary { @apply bg-indigo-600 text-white hover:bg-indigo-500 active:bg-indigo-700; }
+    .btn-secondary { @apply border border-slate-700 bg-slate-800/80 text-slate-100 hover:bg-slate-700/80; }
+    .btn-ghost { @apply border border-transparent text-slate-300 hover:bg-slate-800/70 hover:text-slate-100; }
+    .btn-danger { @apply bg-rose-600/90 text-white hover:bg-rose-500; }
+    .btn-sm { @apply px-2.5 py-1.5 text-xs; }
+    .chip { @apply inline-flex cursor-pointer select-none items-center gap-1.5 rounded-full border border-slate-700/80 bg-slate-900/70 px-3 py-1 text-xs font-medium text-slate-300 transition hover:border-slate-600 hover:text-slate-100; }
+    .chip-active { @apply border-indigo-500/60 bg-indigo-500/15 text-indigo-200 hover:border-indigo-400/70 hover:text-indigo-100; }
+    .mode-card { @apply flex w-full items-start gap-3 rounded-xl border border-slate-800/80 bg-slate-900/50 p-4 text-left transition hover:border-slate-700 hover:bg-slate-900/80; }
+    .mode-card-active { @apply border-indigo-500/60 bg-indigo-500/10 shadow-glow; }
+    .badge { @apply inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-medium leading-4; }
+    .nav-btn { @apply flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-slate-400 transition hover:bg-slate-800/60 hover:text-slate-100; }
+    .nav-btn-active { @apply bg-indigo-500/15 text-indigo-200 hover:bg-indigo-500/20 hover:text-indigo-100; }
+    .overlay { @apply fixed inset-0 z-50 flex; }
+    .overlay-backdrop { @apply absolute inset-0 bg-slate-950/70 backdrop-blur-sm animate-fade-in; }
+    .overlay-panel { @apply relative z-10 m-auto flex max-h-[86vh] w-[calc(100%-2rem)] max-w-2xl flex-col overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl animate-slide-up; }
+    .overlay-panel-right { @apply relative z-10 ml-auto flex h-full w-full max-w-xl flex-col border-l border-slate-800 bg-slate-900 shadow-2xl; }
+    .skeleton { @apply animate-pulse rounded-lg bg-slate-800/70; }
+  </style>
+  <link rel="stylesheet" href="css/styles.css" />
+
+</head>
+<body class="h-full bg-slate-950 font-sans text-slate-100 antialiased selection:bg-indigo-500/30">
+  <!-- ===== Глобальный контейнер уведомлений (кастомный компонент) ===== -->
+  <fadeout-action-popup id="popups" aria-label="Уведомления"></fadeout-action-popup>
+
+  <noscript>
+    <div class="m-6 rounded-xl border border-rose-500/40 bg-rose-500/10 p-4 text-sm text-rose-200">
+      Для работы интерфейса Career-Assistant-AI включите JavaScript.
+    </div>
+  </noscript>
+
+  <!-- ===== ЭКРАН АВТОРИЗАЦИИ ===== -->
+  <section id="auth-screen" class="relative flex min-h-full items-center justify-center overflow-hidden px-4 py-10">
+    <div class="pointer-events-none absolute -left-32 -top-32 h-96 w-96 rounded-full bg-indigo-600/20 blur-3xl"></div>
+    <div class="pointer-events-none absolute -bottom-40 -right-24 h-96 w-96 rounded-full bg-violet-600/20 blur-3xl"></div>
+
+    <div class="relative w-full max-w-md animate-slide-up">
+      <div class="mb-6 flex items-center gap-3">
+        <img src="assets/favicon.svg" alt="Career-Assistant-AI" class="h-11 w-11 rounded-xl shadow-glow" />
+        <div>
+          <h1 class="text-lg font-bold leading-tight">Career-Assistant-AI</h1>
+          <p class="text-xs text-slate-400">Парсинг hh.ru · LLM-анализ · Сопроводительные письма</p>
+        </div>
+      </div>
+
+      <div class="card p-6 shadow-2xl">
+        <div id="auth-tabs" class="mb-5 grid grid-cols-2 gap-1 rounded-xl border border-slate-800 bg-slate-950/60 p-1">
+          <button type="button" data-auth-tab="login"
+                  class="rounded-lg px-3 py-2 text-sm font-semibold transition" aria-selected="true">Вход</button>
+          <button type="button" data-auth-tab="register"
+                  class="rounded-lg px-3 py-2 text-sm font-semibold transition" aria-selected="false">Регистрация</button>
+        </div>
+
+        <!-- Вход -->
+        <form id="login-form" class="space-y-4" novalidate>
+          <div>
+            <label for="login-email" class="mb-1.5 block text-xs font-medium text-slate-400">Email</label>
+            <input id="login-email" name="email" type="email" autocomplete="email" required
+                   class="input" placeholder="user@example.com" />
+          </div>
+          <div>
+            <label for="login-password" class="mb-1.5 block text-xs font-medium text-slate-400">Пароль</label>
+            <input id="login-password" name="password" type="password" autocomplete="current-password" required
+                   minlength="8" class="input" placeholder="••••••••" />
+          </div>
+          <button id="login-submit" type="submit" class="btn-primary w-full">
+            <span class="hidden h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" data-spinner></span>
+            <span>Войти</span>
+          </button>
+          <p id="demo-auth-hint" class="hidden rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-xs text-indigo-200">
+            Демо-режим: подойдут любые email и пароль (данные фиктивные).
+          </p>
+        </form>
+        <!-- Регистрация -->
+        <form id="register-form" class="hidden space-y-4" novalidate>
+          <div>
+            <label for="register-email" class="mb-1.5 block text-xs font-medium text-slate-400">Email</label>
+            <input id="register-email" name="email" type="email" autocomplete="email" required
+                   class="input" placeholder="user@example.com" />
+          </div>
+          <div>
+            <label for="register-password" class="mb-1.5 block text-xs font-medium text-slate-400">Пароль</label>
+            <input id="register-password" name="password" type="password" autocomplete="new-password" required
+                   minlength="8" class="input" placeholder="Минимум 8 символов" />
+          </div>
+          <button id="register-submit" type="submit" class="btn-primary w-full">
+            <span class="hidden h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" data-spinner></span>
+            <span>Создать аккаунт</span>
+          </button>
+          <p class="hint">После регистрации войдите с указанными данными.</p>
+        </form>
+      </div>
+
+      <p class="mt-4 text-center text-[11px] leading-relaxed text-slate-500">
+        Работает без официального API hh.ru · LLM-очередь: Ollama / внешние провайдеры
+      </p>
+    </div>
+  </section>
+
+  <!-- ===== ОСНОВНОЕ ПРИЛОЖЕНИЕ ===== -->
+  <div id="app-screen" class="hidden h-full">
+    <div class="flex h-full overflow-hidden">
+
+      <!-- Sidebar (desktop) -->
+      <aside class="hidden w-64 shrink-0 flex-col border-r border-slate-800/80 bg-slate-900/60 lg:flex">
+        <div class="flex h-16 items-center gap-3 border-b border-slate-800/80 px-4">
+          <img src="assets/favicon.svg" alt="" class="h-8 w-8 rounded-lg" />
+          <div class="min-w-0">
+            <p class="truncate text-sm font-bold">Career-Assistant-AI</p>
+            <p class="text-[10px] uppercase tracking-widest text-slate-500">Modular-Flow</p>
+          </div>
+        </div>
+        <nav class="flex-1 space-y-1 overflow-y-auto p-3" aria-label="Основная навигация">
+          <button type="button" data-tab="dashboard" class="nav-btn">
+            <svg class="h-5 w-5 shrink-0" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M4 3h3v14H4V3zm4.5 6h3v8h-3V9zM13 6h3v11h-3V6z"/></svg>
+            <span>Парсинг дашборд</span>
+          </button>
+          <button type="button" data-tab="analysis" class="nav-btn">
+            <svg class="h-5 w-5 shrink-0" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M7 2h6a2 2 0 0 1 2 2h1a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h1a2 2 0 0 1 2-2zm-.3 9.4-1.4 1.4 2.6 2.6 4.5-4.5-1.4-1.4-3.1 3.1-1.2-1.2z"/></svg>
+            <span>Анализ и отклик</span>
+          </button>
+          <button type="button" data-tab="profile" class="nav-btn">
+            <svg class="h-5 w-5 shrink-0" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M10 10a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm-7 8a7 7 0 0 1 14 0H3z"/></svg>
+            <span>Моё резюме</span>
+          </button>
+        </nav>
+        <div class="border-t border-slate-800/80 p-3">
+          <div class="rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-[11px] leading-relaxed text-slate-500">
+            <p class="mb-1 font-semibold text-slate-400">Лимиты парсинга</p>
+            ≤ 2 воркера на пользователя · 60–80 запросов/IP · 300–500 вакансий/сутки
+          </div>
+        </div>
+      </aside>
+
+      <!-- Контентная колонка -->
+      <div class="flex min-w-0 flex-1 flex-col">
+        <header class="flex h-16 shrink-0 items-center gap-3 border-b border-slate-800/80 bg-slate-900/60 px-4 backdrop-blur">
+          <div class="min-w-0">
+            <h1 id="page-title" class="truncate text-base font-bold">Парсинг дашборд</h1>
+            <p id="page-subtitle" class="hidden truncate text-xs text-slate-400 sm:block">Сбор вакансий: авто / группа / вручную</p>
+          </div>
+          <div class="ml-auto flex shrink-0 items-center gap-2">
+            <div id="active-tasks-pill" class="flex hidden items-center gap-2 rounded-full border border-indigo-500/40 bg-indigo-500/10 px-3 py-1.5 text-xs text-indigo-200">
+              <span class="pulse-dot h-2 w-2 rounded-full bg-indigo-400"></span>
+              <span><b id="active-tasks-count">0</b> в работе</span>
+            </div>
+            <div id="ws-status" class="flex items-center gap-2 rounded-full border border-slate-700/80 bg-slate-900/70 px-3 py-1.5 text-xs text-slate-400">
+              <span id="ws-status-dot" class="h-2 w-2 rounded-full bg-slate-500"></span>
+              <span id="ws-status-label" class="hidden sm:inline">Подключение…</span>
+            </div>
+            <button id="btn-log-toggle" type="button" class="btn-secondary btn-sm" title="Журнал реал-тайм">Журнал</button>
+            <div class="flex items-center gap-2 border-l border-slate-800 pl-2">
+              <span id="user-email" class="hidden max-w-[12rem] truncate text-xs text-slate-400 md:inline">—</span>
+              <button id="btn-logout" type="button" class="btn-ghost btn-sm" title="Выйти из аккаунта">Выйти</button>
+            </div>
+          </div>
+        </header>
+
+        <main class="relative flex-1 overflow-y-auto">
+          <section id="view-dashboard" data-view="dashboard" class="mx-auto max-w-5xl px-4 py-6 pb-24 lg:pb-10"></section>
+          <section id="view-analysis" data-view="analysis" class="mx-auto max-w-6xl px-4 py-6 pb-24 lg:pb-10 hidden"></section>
+          <section id="view-profile" data-view="profile" class="mx-auto max-w-3xl px-4 py-6 pb-24 lg:pb-10 hidden"></section>
+        </main>
+      </div>
+      <!-- Реал-тайм журнал: статичная колонка на xl+, slide-over на меньших экранах -->
+      <div id="log-backdrop" class="fixed inset-0 z-30 hidden bg-slate-950/60 backdrop-blur-sm xl:hidden"></div>
+      <aside id="log-panel" class="fixed inset-y-0 right-0 z-40 flex w-[22rem] max-w-[90vw] translate-x-full flex-col border-l border-slate-800/80 bg-slate-900/95 backdrop-blur transition-transform duration-300 xl:static xl:z-auto xl:w-80 xl:translate-x-0 xl:bg-slate-900/60"
+             aria-label="Журнал реального времени">
+        <div class="flex h-16 shrink-0 items-center gap-2 border-b border-slate-800/80 px-3">
+          <span id="log-live-dot" class="pulse-dot h-2 w-2 shrink-0 rounded-full bg-slate-500"></span>
+          <h2 class="text-sm font-semibold">Журнал реал-тайм</h2>
+          <div class="ml-auto flex items-center gap-1">
+            <select id="log-level-filter" class="rounded-lg border border-slate-700/80 bg-slate-950/70 px-2 py-1 text-xs text-slate-300 outline-none" title="Фильтр по уровню">
+              <option value="">Все уровни</option>
+              <option value="info">Инфо</option>
+              <option value="success">Успех</option>
+              <option value="warning">Внимание</option>
+              <option value="error">Ошибки</option>
+            </select>
+            <button id="log-autoscroll" type="button" class="btn-ghost btn-sm" aria-pressed="true" title="Автопрокрутка журнала">Авто</button>
+            <button id="btn-log-clear" type="button" class="btn-ghost btn-sm" title="Очистить журнал">⌫</button>
+            <button id="log-close" type="button" class="btn-ghost btn-sm xl:hidden" title="Закрыть журнал">✕</button>
+          </div>
+        </div>
+        <div id="log-active-tasks" class="hidden shrink-0 space-y-2 border-b border-slate-800/80 p-3"></div>
+        <ol id="log-list" class="scroll-slim flex-1 space-y-1 overflow-y-auto p-3 font-mono text-[11px] leading-relaxed" aria-live="polite"></ol>
+        <div class="shrink-0 border-t border-slate-800/80 p-2 text-center text-[10px] text-slate-600">
+          WS: task.* · vacancy.updated · analysis.ready · letter.ready · popup
+        </div>
+      </aside>
+
+    </div>
+
+    <!-- Мобильная нижняя навигация -->
+    <nav class="fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-slate-800/80 bg-slate-900/95 backdrop-blur lg:hidden" aria-label="Мобильная навигация">
+      <button type="button" data-tab="dashboard" class="mobile-nav-btn flex flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium text-slate-400 transition">
+        <svg class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M4 3h3v14H4V3zm4.5 6h3v8h-3V9zM13 6h3v11h-3V6z"/></svg>
+        Дашборд
+      </button>
+      <button type="button" data-tab="analysis" class="mobile-nav-btn flex flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium text-slate-400 transition">
+        <svg class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M7 2h6a2 2 0 0 1 2 2h1a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h1a2 2 0 0 1 2-2zm-.3 9.4-1.4 1.4 2.6 2.6 4.5-4.5-1.4-1.4-3.1 3.1-1.2-1.2z"/></svg>
+        Анализ
+      </button>
+      <button type="button" data-tab="profile" class="mobile-nav-btn flex flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium text-slate-400 transition">
+        <svg class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M10 10a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm-7 8a7 7 0 0 1 14 0H3z"/></svg>
+        Резюме
+      </button>
+      <button type="button" data-action="toggle-logs" class="flex flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium text-slate-400 transition">
+        <svg class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M3 3h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zm3.1 4.3L4.7 8.7l3 3 1.4-1.4-1.6-1.6 1.6-1.6-1.4-1.4zm3.9 6.2h5V12h-5v1.5z"/></svg>
+        Журнал
+      </button>
+    </nav>
+  </div>
+
+  <!-- Индикатор демо-режима -->
+  <div id="demo-banner" class="fixed bottom-20 left-4 z-40 hidden lg:bottom-4">
+    <div class="flex items-center gap-2 rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-200 shadow-lg backdrop-blur">
+      <span class="h-2 w-2 rounded-full bg-amber-400"></span>
+      Демо-режим: данные фиктивные
+      <a href="?demo=0" class="underline decoration-amber-400/50 underline-offset-2 hover:text-amber-100">выйти</a>
+    </div>
+  </div>
+    </div>
+  </div>
+  <!-- Контейнер модалок и drawer-панелей (наполняется partials/modals.html) -->
+  <div id="overlay-root"></div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

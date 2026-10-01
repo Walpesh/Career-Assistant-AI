@@ -1,0 +1,65 @@
+<!-- ============ Модалка: анализ вакансии ============ -->
+<div id="analysis-modal" class="overlay" data-open="0" role="dialog" aria-modal="true" aria-labelledby="analysis-modal-title">
+  <div class="overlay-backdrop" data-close="analysis-modal"></div>
+  <div class="overlay-panel">
+    <div class="flex items-start gap-3 border-b border-slate-800 p-4">
+      <div class="min-w-0 flex-1">
+        <h3 id="analysis-modal-title" class="text-sm font-semibold text-slate-200">Анализ соответствия</h3>
+        <p id="analysis-vacancy-title" class="mt-0.5 truncate text-xs text-slate-400">—</p>
+      </div>
+      <button type="button" data-close="analysis-modal" class="btn-ghost btn-sm" aria-label="Закрыть">✕</button>
+    </div>
+    <div id="analysis-body" class="scroll-slim flex-1 overflow-y-auto p-4">
+      <!-- содержимое рендерится в views/analysis.js -->
+    </div>
+    <div class="flex flex-wrap items-center gap-3 border-t border-slate-800 p-4">
+      <button id="btn-analysis-gen-letter" type="button" class="btn-primary btn-sm">
+        <span class="hidden h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" data-spinner></span>
+        <span>Сгенерировать письмо</span>
+      </button>
+      <button type="button" class="btn-ghost btn-sm ml-auto" data-close="analysis-modal">Закрыть</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ Drawer: сопроводительное письмо ============ -->
+<div id="letter-drawer" class="overlay" data-open="0" role="dialog" aria-modal="true" aria-labelledby="letter-drawer-title">
+  <div class="overlay-backdrop" data-close="letter-drawer"></div>
+  <div class="overlay-panel-right">
+    <div class="flex items-start gap-3 border-b border-slate-800 p-4">
+      <div class="min-w-0 flex-1">
+        <h3 id="letter-drawer-title" class="text-sm font-semibold text-slate-200">Сопроводительное письмо</h3>
+        <p id="letter-vacancy-title" class="mt-0.5 truncate text-xs text-slate-400">—</p>
+        <p class="mt-1 flex items-center gap-2 text-[11px] text-slate-500">
+          <span id="letter-version" class="badge border-slate-700 bg-slate-800/60 text-slate-400">v1</span>
+          <span id="letter-updated">—</span>
+        </p>
+      </div>
+      <button type="button" data-close="letter-drawer" class="btn-ghost btn-sm" aria-label="Закрыть">✕</button>
+    </div>
+    <pre id="letter-content" class="scroll-slim flex-1 whitespace-pre-wrap break-words p-4 font-sans text-sm leading-relaxed text-slate-200">—</pre>
+    <div class="flex flex-wrap items-center gap-2 border-t border-slate-800 p-4">
+      <button id="btn-copy-letter" type="button" class="btn-primary btn-sm">Копировать</button>
+      <button id="btn-download-letter" type="button" class="btn-secondary btn-sm">Скачать .txt</button>
+      <button id="btn-regen-letter" type="button" class="btn-ghost btn-sm">
+        <span class="hidden h-3.5 w-3.5 animate-spin rounded-full border-2 border-indigo-300/30 border-t-indigo-300" data-spinner></span>
+        <span>Сгенерировать заново</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ Confirm-диалог ============ -->
+<div id="confirm-modal" class="overlay" data-open="0" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+  <div class="overlay-backdrop" data-close="confirm-modal"></div>
+  <div class="overlay-panel max-w-md">
+    <div class="p-5">
+      <h3 id="confirm-title" class="text-base font-semibold text-slate-100">Подтвердите действие</h3>
+      <p id="confirm-message" class="mt-2 text-sm leading-relaxed text-slate-400">—</p>
+    </div>
+    <div class="flex items-center justify-end gap-2 border-t border-slate-800 p-4">
+      <button id="btn-confirm-cancel" type="button" class="btn-ghost btn-sm">Отмена</button>
+      <button id="btn-confirm-ok" type="button" class="btn-primary btn-sm" data-autofocus>Подтвердить</button>
+    </div>
+  </div>
+</div>
