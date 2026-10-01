@@ -13,6 +13,10 @@ backend/
 │   ├── main.py                 # FastAPI-приложение: CORS, /health, монтирование frontend/
 │   ├── core/
 │   │   └── config.py           # Настройки (pydantic-settings, .env)
+│   ├── db/                     # Слой доступа к данным (SQLAlchemy 2.0 async)
+│   │   ├── base.py             # DeclarativeBase + TimestampMixin (created_at/updated_at)
+│   │   ├── models.py           # 6 ORM-моделей по docs/02_DATABASE.md
+│   │   └── session.py          # async engine (asyncpg), AsyncSessionLocal, dependency get_db
 │   ├── api/v1/router.py        # Сборка роутеров всех модулей под /api/v1
 │   └── modules/                # 8 модулей Modular-Flow
 │       ├── auth/               # Регистрация, логин, JWT            → /auth
@@ -23,9 +27,30 @@ backend/
 │       ├── queue_manager/      # Единая очередь задач и прогресс    → /tasks
 │       ├── analysis_letter/    # Анализ, матчинг, письма            → /analysis, /letters
 │       └── realtime/           # WebSocket-доставка событий         → /ws
+├── alembic.ini                 # Конфигурация Alembic (async, URL из .env)
+├── alembic/                    # Миграции: env.py (async) + versions/
 ├── requirements.txt
 └── .env.example
 ```
+
+## База данных и миграции (docs/02_DATABASE.md)
+
+PostgreSQL 16+, подключение задаётся `DATABASE_URL` в `backend/.env`
+(по умолчанию `postgresql+asyncpg://career:career@localhost:5432/career_assistant`).
+
+```powershell
+# первичная генерация схемы (выполнено: ревизия 67b6d9942cfc)
+python -m alembic upgrade head
+# новая миграция после изменений моделей app/db/models.py
+python -m alembic revision --autogenerate -m "describe change"
+python -m alembic upgrade head
+```
+
+Схема включает 6 таблиц: `users`, `user_profiles`, `vacancies`, `analyses`,
+`cover_letters`, `tasks` — с составным уникальным индексом
+`(user_id, hh_vacancy_id)`, CHECK-ограничениями статусов/баллов и индексами
+очереди задач (включая частичный `status = 'pending'`).
+
 
 ## Запуск
 
