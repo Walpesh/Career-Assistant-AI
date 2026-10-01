@@ -22,7 +22,7 @@ backend/
 │       ├── auth/               # Регистрация, логин, JWT            → /auth
 │       ├── user_profile/       # Профиль, резюме, порог матчинга    → /profile
 │       ├── parsing/            # 3 режима сбора вакансий            → /parsing
-│       ├── proxy_antiban/      # Прокси, fingerprints, антибан      (внутренний)
+│       ├── anti_ban/           # Прокси, fingerprints, антибан      (внутренний)
 │       ├── vacancy_storage/    # Хранение, дедупликация, статусы    → /vacancies
 │       ├── queue_manager/      # Единая очередь задач и прогресс    → /tasks
 │       ├── analysis_letter/    # Анализ, матчинг, письма            → /analysis, /letters

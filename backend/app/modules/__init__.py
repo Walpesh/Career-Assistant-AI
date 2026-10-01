@@ -4,7 +4,7 @@
     auth              — регистрация, авторизация, JWT
     user_profile      — резюме, настройки, порог матчинга, compact_resume
     parsing           — три режима сбора вакансий (авто/группа/вручную)
-    proxy_antiban     — прокси, fingerprints, антибан hh.ru
+    anti_ban              — прокси, fingerprints, антибан hh.ru
     vacancy_storage   — хранение, дедупликация, статусы вакансий
     queue_manager     — единая очередь задач, контроль параллелизма
     analysis_letter   — анализ, матчинг, генерация сопроводительных писем

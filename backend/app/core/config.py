@@ -39,6 +39,15 @@ class Settings(BaseSettings):
     # docs/05 §3 рекомендует 1800–2200 — лимит настраивается через env).
     compact_resume_max_chars: int = 1000
 
+    # --- Прокси / Anti-Ban (docs/04_PARSING_RULES.md §3.1) ---
+    # Только резидентные провайдеры (см. RESIDENTIAL_PROVIDERS в anti_ban.proxy);
+    # датацентровые запрещены. Пусто + без прокси-списка = direct-режим (dev).
+    proxy_provider: str = ""  # напр. brightdata / smartproxy / iproyal
+    proxy_gateway: str = ""  # шлюз провайдера host:port (sticky-сессии)
+    proxy_username: str = ""
+    proxy_password: str = ""
+    proxy_list: str = ""  # явные URL через запятую: http://user:pass@host:port
+
     @property
     def cors_origin_list(self) -> list[str]:
         """CORS-источники из строки через запятую."""
