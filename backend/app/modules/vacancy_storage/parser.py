@@ -16,7 +16,9 @@ Orchestrator / Proxy & Anti-Ban — docs/04 §2). Сейчас — httpx с бр
 
 from __future__ import annotations
 
+import asyncio
 import re
+from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 
 import httpx
@@ -41,16 +43,45 @@ _HEADERS = {
 
 _DEFAULT_TIMEOUT = 15.0
 
+#: Пауза перед повтором сетевого запроса (линейный рост: 1 с, 2 с, …).
+_RETRY_DELAY_SECONDS = 1.0
+
 # data-qa → модельные поля (best-effort: отсутствующие поля остаются None).
+# Список содержит актуальные имена hh.ru и legacy-варианты: при смене вёрстки
+# парсер продолжает собирать поля по одному из известных data-qa (docs/04 §5).
 _QA_FIELDS: dict[str, tuple[str, ...]] = {
-    "company_name": ("vacancy-company-name", "company-name", "employer-name"),
+    "company_name": (
+        "vacancy-company-name",
+        "company-name",
+        "employer-name",
+    ),
     "description_raw": ("vacancy-description",),
-    "experience": ("vacancy-experience",),
-    "employment_form": ("vacancy-employment",),
-    "work_format": ("vacancy-work_format-by-day", "work-format"),
-    "schedule": ("vacancy-schedule",),
-    "area": ("vacancy-view-top-address", "vacancy-address"),
+    "experience": ("vacancy-experience", "work-experience-text"),
+    # Актуальная разметка hh.ru отдаёт занятость как common-employment-text.
+    "employment_form": ("vacancy-employment", "common-employment-text"),
+    "work_format": (
+        "vacancy-work_format-by-day",
+        "work-format",
+        "work-formats-text",
+    ),
+    "schedule": (
+        "vacancy-schedule",
+        "work-schedule-by-days-text",
+        "working-hours-text",
+    ),
+    "area": (
+        "vacancy-view-top-address",
+        "vacancy-address",
+        "vacancy-address-with-map",
+        "vacancy-view-raw-address",
+    ),
     "_salary_text": ("vacancy-salary", "vacancy-salary-raw"),
+    # Дата публикации (docs/04 §7 — обязательное поле).
+    "_published_text": (
+        "vacancy-public-date",
+        "vacancy-creation-date",
+        "vacancy-published-date",
+    ),
 }
 
 _BLOCK_TAGS = frozenset(
@@ -73,6 +104,8 @@ class _CardParser(HTMLParser):
 
     Захват по data-qa: на первом элементе с нужным атрибутом начинается сбор
     текста (с учётом вложенности), завершение — по закрывающему тегу элемента.
+    Повторные вхождения того же поля игнорируются: hh.ru дублирует блоки
+    (десктоп + мобильная вёрстка), иначе значение склеивалось бы дважды.
     """
 
     def __init__(self, qa_names: set[str]) -> None:
@@ -83,6 +116,7 @@ class _CardParser(HTMLParser):
         self._in_title = False
         self._capture_key: str | None = None
         self._capture_depth = 0
+        self._captured: set[str] = set()
         self._qa_index: dict[str, str] = {name: name for name in qa_names}
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
@@ -101,9 +135,10 @@ class _CardParser(HTMLParser):
 
         if self._capture_key is None:
             key = self._qa_index.get(attr.get("data-qa", ""))
-            if key is not None:
+            if key is not None and key not in self._captured:
                 self._capture_key = key
                 self._capture_depth = 0
+                self._captured.add(key)
                 if tag in _VOID_TAGS:
                     self._capture_key = None
                 return
@@ -180,7 +215,36 @@ def _parse_salary(text: str | None) -> tuple[int | None, int | None, str | None]
     return values[0], None, currency
 
 
-def extract_vacancy_fields(html: str) -> dict[str, str | int | None]:
+def _parse_published_at(text: str | None) -> datetime | None:
+    """Дата публикации из подписи карточки (docs/04 §7 — обязательное поле).
+
+    hh.ru отдаёт «сегодня», «вчера», «3 августа» или дату вида «12.05.2025»;
+    относительные значения пересчитываются от текущего дня.
+    """
+    if not text:
+        return None
+    value = text.strip().lower()
+    today = datetime.now(timezone.utc).date()
+
+    if "сегодня" in value:
+        return datetime(today.year, today.month, today.day, tzinfo=timezone.utc)
+    if "вчера" in value:
+        moment = today - timedelta(days=1)
+        return datetime(moment.year, moment.month, moment.day, tzinfo=timezone.utc)
+
+    for pattern, has_year in (("%d.%m.%Y", True), ("%d.%m.%y", True)):
+        match = re.search(r"\d{1,2}\.\d{1,2}\.\d{2,4}", value)
+        if match:
+            try:
+                parsed = datetime.strptime(match.group(0), pattern)
+            except ValueError:
+                continue
+            if has_year:
+                return parsed.replace(tzinfo=timezone.utc)
+    return None
+
+
+def extract_vacancy_fields(html: str) -> dict[str, str | int | datetime | None]:
     """Разбирает HTML карточки вакансии → поля модели Vacancy (docs/04 §7).
 
     Отсутствующие поля возвращаются как None; вызывающий код фильтрует None,
@@ -210,16 +274,36 @@ def extract_vacancy_fields(html: str) -> dict[str, str | int | None]:
         "salary_from": salary_from,
         "salary_to": salary_to,
         "salary_currency": salary_currency,
-        "experience": _normalize_text(parser.qa_text.get("vacancy-experience", [])),
-        "employment_form": _normalize_text(parser.qa_text.get("vacancy-employment", [])),
+        "experience": _normalize_text(
+            parser.qa_text.get("vacancy-experience", [])
+            + parser.qa_text.get("work-experience-text", [])
+        ),
+        "employment_form": _normalize_text(
+            parser.qa_text.get("vacancy-employment", [])
+            + parser.qa_text.get("common-employment-text", [])
+        ),
         "work_format": _normalize_text(
             parser.qa_text.get("vacancy-work_format-by-day", [])
             + parser.qa_text.get("work-format", [])
+            + parser.qa_text.get("work-formats-text", [])
         ),
-        "schedule": _normalize_text(parser.qa_text.get("vacancy-schedule", [])),
+        "schedule": _normalize_text(
+            parser.qa_text.get("vacancy-schedule", [])
+            + parser.qa_text.get("work-schedule-by-days-text", [])
+            + parser.qa_text.get("working-hours-text", [])
+        ),
         "area": _normalize_text(
             parser.qa_text.get("vacancy-view-top-address", [])
             + parser.qa_text.get("vacancy-address", [])
+            + parser.qa_text.get("vacancy-address-with-map", [])
+            + parser.qa_text.get("vacancy-view-raw-address", [])
+        ),
+        # Дата публикации (docs/04 §7).
+        "published_at": _parse_published_at(
+            _normalize_text(
+                parser.qa_text.get("vacancy-public-date", [])
+                + parser.qa_text.get("vacancy-creation-date", [])
+            )
         ),
         "description_raw": _normalize_text(parser.qa_text.get("vacancy-description", [])),
         # Сырой HTML для отладки (docs/04 §7, опционально).
@@ -227,30 +311,54 @@ def extract_vacancy_fields(html: str) -> dict[str, str | int | None]:
     }
 
 
-async def fetch_raw_vacancy(url: str, *, timeout: float = _DEFAULT_TIMEOUT) -> dict:
+async def fetch_raw_vacancy(
+    url: str,
+    *,
+    timeout: float = _DEFAULT_TIMEOUT,
+    attempts: int = 3,
+) -> dict:
     """Один GET на детальную страницу + извлечение минимального набора данных.
 
     Поднимает VacancyNotFound (404/410 → vacancy.status = 'error', docs/04 §5)
     или RawParseError (сеть/неожиданный статус/не разобрана вёрстка).
+
+    Кратковременные сетевые сбои hh.ru (обрыв, таймаут, 5xx) не считаются
+    ошибкой парсинга: выполняется до `attempts` попыток с паузой (docs/04 §5 —
+    сетевые ошибки обрабатываются повтором, а не роняют задачу).
     """
-    try:
-        async with httpx.AsyncClient(
-            headers=_HEADERS, follow_redirects=True, timeout=timeout
-        ) as client:
-            response = await client.get(url)
-    except httpx.HTTPError as exc:
-        raise RawParseError(f"Запрос к hh.ru не удался: {exc}") from exc
+    last_error: Exception | None = None
 
-    if response.status_code in (404, 410):
-        raise VacancyNotFound(
-            f"Вакансия не найдена на hh.ru (HTTP {response.status_code})"
-        )
-    if response.status_code != 200:
-        raise RawParseError(f"Неожиданный ответ hh.ru: HTTP {response.status_code}")
+    for attempt in range(1, max(1, attempts) + 1):
+        try:
+            async with httpx.AsyncClient(
+                headers=_HEADERS, follow_redirects=True, timeout=timeout
+            ) as client:
+                response = await client.get(url)
+        except httpx.HTTPError as exc:
+            last_error = exc
+            if attempt < attempts:
+                await asyncio.sleep(_RETRY_DELAY_SECONDS * attempt)
+                continue
+            raise RawParseError(f"Запрос к hh.ru не удался: {exc}") from exc
 
-    fields = extract_vacancy_fields(response.text)
-    if not fields.get("title"):
-        raise RawParseError(
-            "Не удалось извлечь карточку вакансии (капча или изменилась вёрстка)"
-        )
-    return fields
+        # 404/410 — вакансия удалена, повтор не поможет (docs/04 §5).
+        if response.status_code in (404, 410):
+            raise VacancyNotFound(
+                f"Вакансия не найдена на hh.ru (HTTP {response.status_code})"
+            )
+        # Серверная ошибка hh.ru — пробуем ещё раз.
+        if response.status_code >= 500 and attempt < attempts:
+            await asyncio.sleep(_RETRY_DELAY_SECONDS * attempt)
+            continue
+        if response.status_code != 200:
+            raise RawParseError(f"Неожиданный ответ hh.ru: HTTP {response.status_code}")
+
+        fields = extract_vacancy_fields(response.text)
+        if not fields.get("title"):
+            # Капча или изменившаяся вёрстка: повтор не помогает (docs/04 §5).
+            raise RawParseError(
+                "Не удалось извлечь карточку вакансии (капча или изменилась вёрстка)"
+            )
+        return fields
+
+    raise RawParseError(f"Запрос к hh.ru не удался: {last_error}")

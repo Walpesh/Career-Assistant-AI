@@ -77,5 +77,31 @@ python tools/ui_smoke_test.py
 - [x] Полный UI: Auth, «Моё резюме» (compact_resume + порог матчинга), Парсинг-дашборд (3 режима),
       «Анализ и Отклик» (статусы, match-теги, массовые действия, письма), реал-тайм журнал и прогресс-бары
 - [x] Кастомный компонент `Fadeout-action-popup` (рантайм-уведомления + fallback для WS-события `popup`)
-- [ ] Бизнес-логика backend-модулей (сейчас — точки подключения роутеров по контрактам)
+- [x] Auth Module: регистрация, вход, refresh-ротация, bcrypt, изоляция пользователей
+- [x] User Profile Module: профиль, частичное обновление, сокращение резюме через LLM (этап 0, docs/05 §3)
+- [x] Vacancy Storage Module: список с фильтрами, ручной ингест hh.ru, граф статусов, дедупликация
+- [x] Parsing Orchestrator: автопоиск / групповой / ручной режимы, fallback chain, антибан-сессия
+- [x] Queue Manager: единая очередь `tasks`, приоритеты, лимит 2 воркера на пользователя,
+      отдельная строгая LLM-очередь (1 воркер)
+- [x] Analysis & Letter Module: LLM-анализ и генерация писем (docs/05 §4–§6, §9),
+      все 4 режима `analyze` / `letter` / `analyze_and_letter` / `auto`
+
+### Тесты
+
+```powershell
+cd backend
+python -m pytest                      # 125 интеграционных тестов (БД career_assistant_test)
+python tools/live_smoke_test.py       # сквозной тест на живой БД + Ollama + hh.ru
+python tools/llm_direct_check.py      # прямой прогон LLM-этапов (анализ + письмо)
+python tools/filter_check.py          # лёгкая проверка фильтров парсинга (без сети и БД)
+```
+
+- `tests/` — интеграционные тесты всех модулей (сеть hh.ru и модель подменяются).
+- `tools/filter_check.py` — «лёгкие тест-парсы» по каждому критерию фильтра
+  (занятость / формат / график и их комбинации): строит URL поиска и проверяет
+  контракт `POST /parsing/auto` без обращений к сети. Флаг `--live` дополнительно
+  отправляет реальные запросы на запущенный backend.
+- `tools/live_smoke_test.py` — полный сквозной прогон по HTTP-API: Auth, Profile, Vacancies,
+  Parsing, Analysis, Letters, Tasks, WebSocket. Требует запущенный backend и Ollama.
+- `tools/llm_direct_check.py` — проверка LLM-пайплайна (docs/05 §4 и §5) на реальных данных из БД.
 

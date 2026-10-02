@@ -21,18 +21,25 @@ __all__ = [
 
 
 class ParseAutoRequest(BaseModel):
-    """POST /parsing/auto — Автопоиск по ключевым словам (docs/03 §5)."""
+    """POST /parsing/auto — Автопоиск по ключевым словам (docs/03 §5).
+
+    Фильтры комбинируются: можно одновременно передать любое количество
+    форм занятости, форматов работы и графиков (docs/04 §4.1 п.1 — «URL на
+    основе ключевых слов и фильтров»). Перечни значений — полный набор
+    hh.ru, который использует интерфейс, поэтому выбор нескольких чипов
+    больше не отсекается валидацией.
+    """
 
     keywords: list[str] = Field(default_factory=list, description="Ключевые слова для поиска")
-    employment_forms: list[Literal["full", "gph", "part"]] = Field(
-        default_factory=list, description="Формы занятости"
-    )
-    work_formats: list[Literal["remote", "hybrid", "office"]] = Field(
+    employment_forms: list[
+        Literal["full", "part", "project", "volunteer", "probation", "gph"]
+    ] = Field(default_factory=list, description="Формы занятости")
+    work_formats: list[Literal["remote", "hybrid", "onsite", "office"]] = Field(
         default_factory=list, description="Форматы работы"
     )
-    schedules: list[Literal["fullDay", "flexible", "shift", "remote"]] = Field(
-        default_factory=list, description="Графики работы"
-    )
+    schedules: list[
+        Literal["fullDay", "flexible", "shift", "remote", "flyInFlyOut"]
+    ] = Field(default_factory=list, description="Графики работы")
     match_threshold: int = Field(
         default=70, ge=0, le=100, description="Порог матчинга для автоматической генерации письма"
     )

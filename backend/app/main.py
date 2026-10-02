@@ -7,6 +7,10 @@
 - /      — отдача frontend/ (если каталог существует).
 """
 
+from __future__ import annotations
+
+import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -19,6 +23,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.errors import AppError, DEFAULT_ERROR_CODES
+
+logger = logging.getLogger(__name__)
 
 FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
 
@@ -75,11 +81,54 @@ def _validation_detail(exc: RequestValidationError) -> str:
     return "Ошибка валидации: " + "; ".join(parts) if parts else "Ошибка валидации"
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Жизненный цикл: Redis-очередь и ARQ-воркеры Queue Manager (docs/04 §6).
+
+    DB short-polling отсутствует: задачи попадают в Redis при создании через
+    `enqueue_job`, а воркеры забирают их настоящим чтением очереди ARQ.
+    Поэтому в состоянии простоя SQL-запросов к `tasks` нет вообще.
+    """
+    from app.db.session import AsyncSessionLocal
+    from app.modules.queue_manager.queues import (
+        close_pool,
+        get_pool,
+        recover_pending_tasks,
+        start_embedded_workers,
+        stop_embedded_workers,
+    )
+    from app.modules.realtime.bus import RealtimeBridge
+
+    bridge = RealtimeBridge()
+    redis_available = await get_pool() is not None
+
+    # Разовая реанимация задач, застрявших в pending/processing после сбоя.
+    if redis_available and settings.queue_recover_on_startup:
+        try:
+            await recover_pending_tasks(AsyncSessionLocal)
+        except Exception:  # noqa: BLE001 — старт не должен зависеть от восстановления
+            logger.exception("Queue Manager: не удалось восстановить задачи")
+
+    await bridge.start()
+
+    if redis_available and settings.queue_embedded_workers:
+        await start_embedded_workers(AsyncSessionLocal)
+
+    try:
+        yield
+    finally:
+        await stop_embedded_workers()
+        await bridge.stop()
+        await close_pool()
+        logger.info("Queue Manager: остановлен")
+
+
 def create_app() -> FastAPI:
     app = FastAPI(
         title=settings.app_name,
         version=settings.app_version,
         description="Сервис автоматизации поиска, парсинга и анализа вакансий hh.ru + LLM-письма",
+        lifespan=lifespan,
     )
 
     # --- Единый формат ошибок (docs/03 §1: { detail, error_code }) ---

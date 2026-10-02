@@ -1,0 +1,263 @@
+INFO:     127.0.0.1:54221 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54243 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "POST /api/v1/auth/register HTTP/1.1" 201 Created
+INFO:     127.0.0.1:54245 - "POST /api/v1/auth/login HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/auth/me HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/auth/me HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:54245 - "GET /api/v1/auth/me HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:54245 - "GET /api/v1/auth/me HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:54245 - "POST /api/v1/auth/refresh HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "POST /api/v1/auth/refresh HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:54245 - "POST /api/v1/auth/login HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:54245 - "POST /api/v1/auth/register HTTP/1.1" 400 Bad Request
+INFO:     127.0.0.1:54245 - "GET /api/v1/profile HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "PUT /api/v1/profile HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "PUT /api/v1/profile HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "PUT /api/v1/profile HTTP/1.1" 400 Bad Request
+INFO:     127.0.0.1:54245 - "PUT /api/v1/profile HTTP/1.1" 400 Bad Request
+INFO:     127.0.0.1:54245 - "PUT /api/v1/profile HTTP/1.1" 400 Bad Request
+INFO:     127.0.0.1:54245 - "POST /api/v1/profile/convert-resume HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "POST /api/v1/profile/compress-resume HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/profile HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/vacancies HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/vacancies?status=raw HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/vacancies?status=letter_ready HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/vacancies?source=auto HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/vacancies?source=manual HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/vacancies?search=Python HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/vacancies?min_match_score=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/vacancies?status=wrong_status HTTP/1.1" 400 Bad Request
+INFO:     127.0.0.1:54245 - "GET /api/v1/vacancies?page=1&size=2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/vacancies/5d6b7cc2-b879-408c-b266-0e60c1305197 HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:54245 - "POST /api/v1/vacancies/manual HTTP/1.1" 201 Created
+INFO:     127.0.0.1:54245 - "POST /api/v1/vacancies/manual HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "POST /api/v1/vacancies/manual HTTP/1.1" 400 Bad Request
+INFO:     127.0.0.1:54245 - "PATCH /api/v1/vacancies/7df2c244-e817-4f95-9bc5-3c070e83dbe7/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "PATCH /api/v1/vacancies/7df2c244-e817-4f95-9bc5-3c070e83dbe7/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "PATCH /api/v1/vacancies/7df2c244-e817-4f95-9bc5-3c070e83dbe7/status HTTP/1.1" 409 Conflict
+INFO:     127.0.0.1:54245 - "PATCH /api/v1/vacancies/7df2c244-e817-4f95-9bc5-3c070e83dbe7/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "PATCH /api/v1/vacancies/7df2c244-e817-4f95-9bc5-3c070e83dbe7/status HTTP/1.1" 409 Conflict
+INFO:     127.0.0.1:54245 - "PATCH /api/v1/vacancies/7df2c244-e817-4f95-9bc5-3c070e83dbe7/status HTTP/1.1" 400 Bad Request
+INFO:     127.0.0.1:54245 - "POST /api/v1/parsing/auto HTTP/1.1" 400 Bad Request
+INFO:     127.0.0.1:54245 - "POST /api/v1/parsing/auto HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "POST /api/v1/parsing/auto HTTP/1.1" 400 Bad Request
+INFO:     127.0.0.1:54245 - "POST /api/v1/parsing/auto HTTP/1.1" 400 Bad Request
+INFO:     127.0.0.1:54245 - "POST /api/v1/parsing/group HTTP/1.1" 400 Bad Request
+INFO:     127.0.0.1:54245 - "POST /api/v1/parsing/group HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "POST /api/v1/parsing/manual HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "POST /api/v1/parsing/manual HTTP/1.1" 400 Bad Request
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/82093419-8a22-4827-a16c-955c2751a029 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/a3a143ca-6650-4aa9-96e3-6742a1040795 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/a3a143ca-6650-4aa9-96e3-6742a1040795 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/a3a143ca-6650-4aa9-96e3-6742a1040795 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/a3a143ca-6650-4aa9-96e3-6742a1040795 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/a3a143ca-6650-4aa9-96e3-6742a1040795 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/077f276a-33c1-48c1-a463-8fa82192a852 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/82093419-8a22-4827-a16c-955c2751a029 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/vacancies?size=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "POST /api/v1/analysis/run HTTP/1.1" 400 Bad Request
+INFO:     127.0.0.1:54245 - "POST /api/v1/analysis/run HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:54245 - "POST /api/v1/analysis/run HTTP/1.1" 400 Bad Request
+INFO:     127.0.0.1:54245 - "GET /api/v1/analysis/77698726-452e-4b30-9d92-d353a3b2d8cb HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:54245 - "GET /api/v1/letters/e313dc2b-52a4-4418-b622-29a9dd5eea99 HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:54245 - "POST /api/v1/analysis/run HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/f083a39f-3470-4419-bb87-21ac678a4448 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/f083a39f-3470-4419-bb87-21ac678a4448 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/f083a39f-3470-4419-bb87-21ac678a4448 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/f083a39f-3470-4419-bb87-21ac678a4448 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/f083a39f-3470-4419-bb87-21ac678a4448 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/f083a39f-3470-4419-bb87-21ac678a4448 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "POST /api/v1/analysis/run HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/c15cfd76-9cd2-42b9-9f99-6c241e3778fc HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/c15cfd76-9cd2-42b9-9f99-6c241e3778fc HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/c15cfd76-9cd2-42b9-9f99-6c241e3778fc HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/c15cfd76-9cd2-42b9-9f99-6c241e3778fc HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/c15cfd76-9cd2-42b9-9f99-6c241e3778fc HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/c15cfd76-9cd2-42b9-9f99-6c241e3778fc HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/c15cfd76-9cd2-42b9-9f99-6c241e3778fc HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "POST /api/v1/analysis/run HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/c23d4858-6956-4b0b-a705-1559059a0a0d HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/c23d4858-6956-4b0b-a705-1559059a0a0d HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/c23d4858-6956-4b0b-a705-1559059a0a0d HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/c23d4858-6956-4b0b-a705-1559059a0a0d HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/c23d4858-6956-4b0b-a705-1559059a0a0d HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/c23d4858-6956-4b0b-a705-1559059a0a0d HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/c23d4858-6956-4b0b-a705-1559059a0a0d HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/c23d4858-6956-4b0b-a705-1559059a0a0d HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/c23d4858-6956-4b0b-a705-1559059a0a0d HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/c23d4858-6956-4b0b-a705-1559059a0a0d HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/c23d4858-6956-4b0b-a705-1559059a0a0d HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "POST /api/v1/analysis/run HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/e4b39d48-854f-4bd4-bfdd-b7e154dc923c HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/e4b39d48-854f-4bd4-bfdd-b7e154dc923c HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/e4b39d48-854f-4bd4-bfdd-b7e154dc923c HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/e4b39d48-854f-4bd4-bfdd-b7e154dc923c HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/e4b39d48-854f-4bd4-bfdd-b7e154dc923c HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/e4b39d48-854f-4bd4-bfdd-b7e154dc923c HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/e4b39d48-854f-4bd4-bfdd-b7e154dc923c HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/e4b39d48-854f-4bd4-bfdd-b7e154dc923c HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/e4b39d48-854f-4bd4-bfdd-b7e154dc923c HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/e4b39d48-854f-4bd4-bfdd-b7e154dc923c HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/analysis/20b3e7ad-37c2-45e5-ad40-728cbe332236 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/analysis/8f0d8779-dc4b-411f-a6c1-82178a45117a HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:54245 - "GET /api/v1/analysis/f8bd7a1a-8a9a-4e6d-84ff-4d6d1e2b2707 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/analysis/57264665-5b91-43cc-bc78-547cbca0fb82 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/vacancies/20b3e7ad-37c2-45e5-ad40-728cbe332236 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/vacancies/8f0d8779-dc4b-411f-a6c1-82178a45117a HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/vacancies/f8bd7a1a-8a9a-4e6d-84ff-4d6d1e2b2707 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/vacancies/57264665-5b91-43cc-bc78-547cbca0fb82 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/profile HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/letters/20b3e7ad-37c2-45e5-ad40-728cbe332236 HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:54245 - "GET /api/v1/letters/8f0d8779-dc4b-411f-a6c1-82178a45117a HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/letters/f8bd7a1a-8a9a-4e6d-84ff-4d6d1e2b2707 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/letters/57264665-5b91-43cc-bc78-547cbca0fb82 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/letters/f8bd7a1a-8a9a-4e6d-84ff-4d6d1e2b2707 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "POST /api/v1/analysis/run HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/1030c059-c447-4a26-8683-d42cb9114e4c HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/1030c059-c447-4a26-8683-d42cb9114e4c HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/1030c059-c447-4a26-8683-d42cb9114e4c HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/1030c059-c447-4a26-8683-d42cb9114e4c HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/1030c059-c447-4a26-8683-d42cb9114e4c HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/1030c059-c447-4a26-8683-d42cb9114e4c HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/1030c059-c447-4a26-8683-d42cb9114e4c HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/1030c059-c447-4a26-8683-d42cb9114e4c HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/1030c059-c447-4a26-8683-d42cb9114e4c HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/1030c059-c447-4a26-8683-d42cb9114e4c HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/1030c059-c447-4a26-8683-d42cb9114e4c HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/1030c059-c447-4a26-8683-d42cb9114e4c HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/1030c059-c447-4a26-8683-d42cb9114e4c HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/letters/f8bd7a1a-8a9a-4e6d-84ff-4d6d1e2b2707 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "POST /api/v1/vacancies/manual HTTP/1.1" 201 Created
+INFO:     127.0.0.1:54245 - "DELETE /api/v1/vacancies/55b2b694-f0f4-4c63-92c7-3c80591473bb HTTP/1.1" 204 No Content
+INFO:     127.0.0.1:54245 - "GET /api/v1/vacancies/55b2b694-f0f4-4c63-92c7-3c80591473bb HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:54245 - "DELETE /api/v1/vacancies/55b2b694-f0f4-4c63-92c7-3c80591473bb HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks?page=1&size=3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/e19726f4-fb1d-4a69-84ba-d6f359ef9d00 HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:54245 - "POST /api/v1/tasks/1030c059-c447-4a26-8683-d42cb9114e4c/cancel HTTP/1.1" 400 Bad Request
+INFO:     127.0.0.1:54245 - "POST /api/v1/parsing/auto HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "POST /api/v1/tasks/c28cb679-e0bd-4e2f-a363-47fb94d3999b/cancel HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "GET /api/v1/tasks/c28cb679-e0bd-4e2f-a363-47fb94d3999b HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54245 - "POST /api/v1/tasks/c28cb679-e0bd-4e2f-a363-47fb94d3999b/cancel HTTP/1.1" 400 Bad Request
+INFO:     127.0.0.1:58898 - "GET / HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:58898 - "GET /css/styles.css HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:59962 - "GET /js/main.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:57002 - "GET /assets/favicon.svg HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:57002 - "GET /js/config.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:59962 - "GET /js/core/session.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:58898 - "GET /js/core/api.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:52015 - "GET /js/core/bus.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:64629 - "GET /js/core/state.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:57492 - "GET /js/core/tasks.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:57002 - "GET /js/core/ws.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:59962 - "GET /js/core/partials.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:58898 - "GET /js/core/mock.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:52015 - "GET /js/components/fadeout-action-popup.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:64629 - "GET /js/components/overlay.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:57492 - "GET /js/views/auth.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:57002 - "GET /js/views/shell.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:59962 - "GET /js/views/log-panel.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:58898 - "GET /js/views/profile.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:52015 - "GET /js/views/dashboard.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:64629 - "GET /js/views/analysis.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:57492 - "GET /js/core/utils.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:52015 - "GET /js/components/badges.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:58898 - "GET /js/components/progress.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:59962 - "GET /js/components/tag-input.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:59962 - "GET /partials/modals.html HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:59962 - "GET /api/v1/auth/me HTTP/1.1" 401 Unauthorized

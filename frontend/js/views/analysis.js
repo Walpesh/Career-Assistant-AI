@@ -118,6 +118,8 @@ export async function mount() {
     if (currentLetter.vacancyId && payload?.vacancy_id === currentLetter.vacancyId) loadLetter(currentLetter.vacancyId);
     scheduleLiveRefresh();
   });
+  // Переподключение WS — список могл устареть, перечитываем без скелетона.
+  on('ws:resync', () => refreshList({ silent: true }));
 
   syncBatchBar();
   await refreshList();

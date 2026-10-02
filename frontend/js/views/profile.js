@@ -5,7 +5,15 @@
 
 import { api } from '../core/api.js';
 import { on } from '../core/bus.js';
-import { getState, setState } from '../core/state.js';
+import {
+  getState,
+  setState,
+  getMatchThreshold,
+  getSavedMatchThreshold,
+  setMatchThreshold,
+  commitMatchThreshold
+} from '../core/state.js';
+import { CONFIG } from '../config.js';
 import { loadPartial } from '../core/partials.js';
 import { popup } from '../components/fadeout-action-popup.js';
 import { TagInput } from '../components/tag-input.js';
@@ -58,8 +66,19 @@ export async function mount() {
   els.workFormats.forEach((input) => input.addEventListener('change', markDirty));
 
   els.threshold.addEventListener('input', () => {
+    // Порог — общий для главной страницы и профиля (state.js).
+    setMatchThreshold(els.threshold.value, 'profile');
     els.thresholdValue.textContent = `${els.threshold.value}%`;
     markDirty();
+  });
+
+  // Синхронизация с главной страницей и сохранённым профилем.
+  on('match:threshold', ({ source }) => {
+    if (source === 'profile' || !els.threshold) return;
+    const threshold = clamp(getMatchThreshold(), 0, 100);
+    if (Number(els.threshold.value) === threshold) return;
+    els.threshold.value = threshold;
+    els.thresholdValue.textContent = `${threshold}%`;
   });
 
   els.saveButton.addEventListener('click', saveProfile);
@@ -107,12 +126,22 @@ function fillForm(profile = {}) {
   els.experience.value = profile.experience_years ?? '';
   els.salaryFrom.value = profile.desired_salary_from ?? '';
   els.salaryTo.value = profile.desired_salary_to ?? '';
-  els.threshold.value = clamp(Number(profile.match_threshold ?? 70), 0, 100);
+  // Не затираем слайдер, если пользователь двигает его прямо сейчас —
+  // приоритет у несохранённого значения (state.threshold).
+  els.threshold.value = clamp(getMatchThreshold(), 0, 100);
   els.thresholdValue.textContent = `${els.threshold.value}%`;
   const formats = profile.preferred_work_formats || [];
   els.workFormats.forEach((input) => { input.checked = formats.includes(input.value); });
   renderCompact(profile);
   snapshot = readForm();
+  // В снимке — СОХРАНЁННЫЙ порог: показанное значение может быть
+  // несохранённым (например, изменённым на главной странице), и иначе
+  // кнопка «Сохранить профиль» решила бы, что порог менять не нужно.
+  snapshot.match_threshold = clamp(
+    Number(profile.match_threshold ?? getSavedMatchThreshold()),
+    0,
+    100
+  );
   els.savedAt.textContent = profile.updated_at ? `Сохранено: ${formatDateTime(profile.updated_at)}` : '—';
 }
 
@@ -145,6 +174,9 @@ async function saveProfile() {
   try {
     const updated = await api.updateProfile(patch);
     const merged = { ...getState().profile, ...patch, ...(updated && typeof updated === 'object' ? updated : {}) };
+    // Порог сохранён на сервере → несохранённое значение сбрасывается,
+    // обе вкладки показывают значение из профиля.
+    commitMatchThreshold();
     setState({ profile: merged });
     fillForm(merged);
     popup.success('Профиль сохранён', 'Изменения применены.');
@@ -166,6 +198,7 @@ function resetForm() {
   els.salaryTo.value = snapshot.desired_salary_to ?? '';
   els.threshold.value = snapshot.match_threshold ?? 70;
   els.thresholdValue.textContent = `${els.threshold.value}%`;
+  setMatchThreshold(els.threshold.value, 'profile');
   els.workFormats.forEach((input) => { input.checked = (snapshot.preferred_work_formats || []).includes(input.value); });
   popup.info('Изменения сброшены', 'Форма возвращена к сохранённому состоянию.');
 }
@@ -175,7 +208,7 @@ function markDirty() {
 }
 
 function updateResumeCounter() {
-  els.resumeCounter.textContent = `${charCount(els.resume.value)} / 5000`;
+  els.resumeCounter.textContent = `${charCount(els.resume.value)} / ${CONFIG.RESUME_MAX_CHARS}`;
 }
 
 /* ---------- compact_resume ---------- */
@@ -187,7 +220,8 @@ function renderCompact(profile) {
   els.compactView.classList.toggle('text-slate-500', !hasCompact);
   els.copyCompact.disabled = !hasCompact;
   if (hasCompact) {
-    els.compactMeta.textContent = `${charCount(compact)} симв.`;
+    // Лимит compact_resume (должен совпадать с backend COMPACT_RESUME_MAX_CHARS).
+    els.compactMeta.textContent = `${charCount(compact)} / ${CONFIG.COMPACT_MAX_CHARS} симв.`;
   } else {
     els.compactMeta.textContent = 'не создано';
   }

@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Path
@@ -28,9 +28,19 @@ from app.core.errors import AppError
 from app.db.models import Analysis, CoverLetter, Task, Vacancy
 from app.db.session import get_db
 from app.modules.auth.deps import get_current_user
+from app.modules.queue_manager.queues import QueueUnavailable, enqueue_task
+from app.modules.realtime.bus import publish_event
 
 analysis_router = APIRouter(prefix="/analysis", tags=["analysis"])
 letters_router = APIRouter(prefix="/letters", tags=["letters"])
+
+#: Режим обработки → тип задачи в очереди (docs/02 §3.6).
+_TASK_TYPE_BY_MODE: dict[str, str] = {
+    "analyze": "analyze",
+    "letter": "generate_letter",
+    "analyze_and_letter": "auto_full",
+    "auto": "auto_full",
+}
 
 
 # --- Schemas ---
@@ -108,11 +118,19 @@ async def run_analysis(
         if vacancy is None or vacancy.user_id != user.id:
             raise AppError(404, f"Вакансия {vid} не найдена", "NOT_FOUND")
 
-    # Создаём задачу
-    task_payload = payload.model_dump(exclude_none=True)
+    # Тип задачи соответствует режиму (docs/02 §3.6, фронтенд docs/03 §6):
+    # analyze → analyze, letter → generate_letter, остальное → auto_full.
+    task_type = _TASK_TYPE_BY_MODE.get(payload.mode, "auto_full")
+
+    # UUID не сериализуются в JSONB — payload задачи храним в строках.
+    task_payload = {
+        "vacancy_ids": [str(vid) for vid in payload.vacancy_ids],
+        "mode": payload.mode,
+        "match_threshold": payload.match_threshold,
+    }
     task = Task(
         user_id=user.id,
-        task_type="analyze",
+        task_type=task_type,
         status="pending",
         progress_current=0,
         progress_total=len(payload.vacancy_ids),
@@ -121,6 +139,26 @@ async def run_analysis(
     db.add(task)
     await db.commit()
     await db.refresh(task)
+
+    # Задача сразу уходит в Redis-очередь LLM (docs/04 §6) — опроса БД нет.
+    try:
+        await enqueue_task(task.id, task.task_type)
+    except QueueUnavailable as exc:
+        task.status = "failed"
+        task.error_message = f"Очередь задач недоступна: {exc}"
+        task.finished_at = datetime.now(timezone.utc)
+        await db.commit()
+        raise AppError(
+            503,
+            "Очередь задач недоступна, повторите попытку позже",
+            "QUEUE_UNAVAILABLE",
+        ) from exc
+
+    await publish_event(
+        str(user.id),
+        "task.created",
+        {"task_id": str(task.id), "task_type": task.task_type, "status": task.status},
+    )
     return RunAnalysisResponse(task_id=str(task.id), status="pending")
 
 

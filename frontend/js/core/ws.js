@@ -3,20 +3,38 @@
    Подключение: {api-base}/ws?token=<access_token>
    События сервера: task.*, vacancy.updated, analysis.ready, letter.ready, popup.
    Клиент только слушает; команды — через REST.
+
+   Обработчики привязаны к конкретному сокету: если соединение заменено
+   (повторный connect или реконнект), его onclose/onmessage игнорируются.
+   Иначе устаревший сокет планировал бы ещё один реконнект поверх уже
+   открытого — это и вызывало циклические «переподключения» страницы.
    ============================================================ */
 
 import { CONFIG, buildWsUrl } from '../config.js';
 import { emit } from './bus.js';
 
+/** Сервер закрывает канал: access-токен невалиден/истёк (docs/03 §2). */
+const CLOSE_AUTH_ERROR = 4401;
+/** Сервер закрывает канал: подключение вытеснено более новым. */
+const CLOSE_REPLACED = 4001;
+
 export class RealtimeClient {
-  constructor() {
+  /**
+   * @param {{ onUnauthorized?: () => void }} [options]
+   *   onUnauthorized — вызывается при закрытии 4401 (токен истёк);
+   *   по умолчанию эмитится auth:expired (см. main.js: пробуем refresh).
+   */
+  constructor(options = {}) {
     this.socket = null;
     this.token = null;
     this.attempt = 0;
     this.manualClose = false;
     this.reconnectTimer = null;
+    this.heartbeatTimer = null;
     this.status = 'disconnected';
     this.isAuthenticated = true; // Флаг для отслеживания, нужно ли переподключение
+    this.everConnected = false;
+    this.onUnauthorized = options.onUnauthorized || (() => emit('auth:expired'));
   }
 
   connect(token) {
@@ -29,53 +47,68 @@ export class RealtimeClient {
   open() {
     // Не пытаемся подключиться без токена или при ручном закрытии
     if (!this.token || this.manualClose || !this.isAuthenticated) return;
-    
-    // Закрываем старое соединение, если оно существует
-    if (this.socket && (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)) {
-      try {
-        this.socket.close();
-      } catch { /* ignore */ }
-    }
+
+    clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+
+    // Забываем прежнее соединение ДО close(): его обработчики уже сняты,
+    // поэтому onclose не инициирует лишний реконнект поверх нового сокета.
+    this.dropSocket();
 
     this.setStatus('connecting');
 
+    let socket;
     try {
-      this.socket = new WebSocket(buildWsUrl(this.token));
+      socket = new WebSocket(buildWsUrl(this.token));
     } catch {
       this.scheduleReconnect();
       return;
     }
+    this.socket = socket;
 
-    this.socket.onopen = () => {
+    socket.onopen = () => {
+      if (socket !== this.socket) return; // соединение уже заменено
       this.attempt = 0;
-      this.manualClose = false; // Сбрасываем флаг после успешного подключения
+      this.startHeartbeat();
       this.setStatus('connected');
       emit('log:system', { level: 'info', message: 'WebSocket-соединение установлено' });
+      // После переподключения события могли потеряться — нужна пересинхронизация.
+      if (this.everConnected) emit('ws:resync');
+      this.everConnected = true;
     };
 
-    this.socket.onmessage = (event) => this.handleMessage(event.data);
+    socket.onmessage = (event) => {
+      if (socket !== this.socket) return;
+      this.handleMessage(event.data);
+    };
 
-    this.socket.onclose = (event) => {
+    socket.onclose = (event) => {
+      if (socket !== this.socket) return; // устаревший сокет — не наше дело
+      this.socket = null;
+      this.stopHeartbeat();
       this.setStatus('disconnected');
-      
-      // Коды закрытия:
-      // 1000 - нормальное закрытие (сервер или клиент инициировал)
-      // 4401 - ошибка аутентификации (не переподключаемся)
-      const isAuthError = event.code === 4401;
-      
-      if (!this.manualClose && !isAuthError) {
-        // Переподключаемся только при нормальном разрыве соединения
-        emit('log:system', { level: 'warning', message: 'WebSocket-соединение потеряно, переподключение…' });
-        this.scheduleReconnect();
-      } else if (isAuthError) {
-        // При ошибке аутентификации падаем через auth:expired
+
+      if (this.manualClose) return; // штатное закрытие (логаут/выход)
+
+      // 4401 — access-токен невалиден: переподключение не поможет.
+      if (event.code === CLOSE_AUTH_ERROR) {
         this.isAuthenticated = false;
-        emit('auth:expired');
+        this.onUnauthorized();
+        return;
       }
+      // Соединение вытеснено более новым — переподключение снова вытеснило бы
+      // его и запустило ping-pong, поэтому не переподключаемся.
+      if (event.code === CLOSE_REPLACED) {
+        emit('log:system', { level: 'warning', message: 'WebSocket вытеснен более новым подключением' });
+        return;
+      }
+
+      emit('log:system', { level: 'warning', message: 'WebSocket-соединение потеряно, переподключение…' });
+      this.scheduleReconnect();
     };
 
     // Ошибка всегда сопровождается onclose — реконнект выполняет он.
-    this.socket.onerror = () => {};
+    socket.onerror = () => {};
   }
 
   handleMessage(raw) {
@@ -86,6 +119,7 @@ export class RealtimeClient {
       return;
     }
     if (!message || !message.event) return;
+    if (message.event === 'pong') return; // heartbeat — в журнал не пишем
 
     // Поддерживаем оба формата сервера: { event, ...payload } и { event, data: {...} }.
     const { event, data, ...rest } = message;
@@ -95,10 +129,29 @@ export class RealtimeClient {
     emit(`ws:${event}`, payload);
   }
 
+  /** Heartbeat: клиент шлёт ping, сервер отвечает pong (docs/03 §8). */
+  startHeartbeat() {
+    this.stopHeartbeat();
+    this.heartbeatTimer = setInterval(() => {
+      const socket = this.socket;
+      if (!socket || socket.readyState !== WebSocket.OPEN) return;
+      try {
+        socket.send(JSON.stringify({ event: 'ping' }));
+      } catch {
+        /* ignore — о разрыве сообщит onclose */
+      }
+    }, CONFIG.WS_HEARTBEAT_INTERVAL_MS);
+  }
+
+  stopHeartbeat() {
+    clearInterval(this.heartbeatTimer);
+    this.heartbeatTimer = null;
+  }
+
   scheduleReconnect() {
     // Не переподключаемся, если это ручное закрытие или ошибка аутентификации
     if (this.manualClose || !this.isAuthenticated) return;
-    
+
     clearTimeout(this.reconnectTimer);
     const delay = Math.min(CONFIG.RECONNECT_MAX_DELAY_MS, 1000 * 2 ** this.attempt) + Math.random() * 400;
     this.attempt = Math.min(this.attempt + 1, 5);
@@ -106,20 +159,35 @@ export class RealtimeClient {
   }
 
   setStatus(status) {
+    if (this.status === status) return; // индикатор не «дёргается» зря
     this.status = status;
     emit('ws:status', status);
+  }
+
+  /** Снять обработчики и закрыть текущее соединение (если есть). */
+  dropSocket() {
+    const socket = this.socket;
+    this.socket = null;
+    this.stopHeartbeat();
+    if (!socket) return;
+    socket.onopen = null;
+    socket.onmessage = null;
+    socket.onclose = null;
+    socket.onerror = null;
+    try {
+      socket.close();
+    } catch {
+      /* ignore */
+    }
   }
 
   close() {
     this.manualClose = true;
     this.isAuthenticated = false;
     clearTimeout(this.reconnectTimer);
-    try {
-      this.socket?.close();
-    } catch {
-      /* ignore */
-    }
-    this.socket = null;
+    this.reconnectTimer = null;
+    this.stopHeartbeat();
+    this.dropSocket();
     this.setStatus('disconnected');
   }
 }

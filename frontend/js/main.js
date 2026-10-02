@@ -22,7 +22,29 @@ import * as profileView from './views/profile.js';
 import * as dashboardView from './views/dashboard.js';
 import * as analysisView from './views/analysis.js';
 
-const realtime = CONFIG.DEMO ? new DemoSocket() : new RealtimeClient();
+/**
+ * WS закрыт кодом 4401 — access-токен истёк. Раньше это немедленно
+ * возвращало на экран входа (пользователь воспринимал это как «перезагрузку
+ * страницы» каждые ACCESS_TOKEN_EXPIRE_MINUTES). Теперь пробуем refresh-ротацию
+ * (docs/03 §2) и переподключаем канал с новым токеном.
+ */
+async function handleWsUnauthorized() {
+  try {
+    const data = await api.refresh();
+    if (data?.access_token && session.accessToken) {
+      realtime.connect(session.accessToken);
+      return;
+    }
+  } catch (error) {
+    console.warn('[ws] не удалось обновить токен:', error.message);
+  }
+  showAuthScreen();
+  popup.warning('Сессия истекла', 'Войдите в аккаунт заново.');
+}
+
+const realtime = CONFIG.DEMO
+  ? new DemoSocket()
+  : new RealtimeClient({ onUnauthorized: handleWsUnauthorized });
 
 async function boot() {
   bindOverlays();
@@ -52,6 +74,14 @@ async function boot() {
   on('auth:expired', () => {
     showAuthScreen();
     popup.warning('Сессия истекла', 'Войдите в аккаунт заново.');
+  });
+
+  // Переподключение WS: события за время обрыва потеряны — обновляем профиль
+  // (порог матчинга) и просим вкладки перечитать данные.
+  on('ws:resync', () => {
+    api.getProfile()
+      .then((profile) => setState({ profile }))
+      .catch((error) => console.warn('[ws] профиль не обновлён:', error.message));
   });
 
   authView.initAuth(() => enterApp());

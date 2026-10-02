@@ -40,3 +40,14 @@ desktop.ini
 # --- Локальные артефакты ---
 *.local
 tools/.artifacts/
+__pycache__/
+*.py[cod]
+
+# --- Логи запуска и тестов (локальные прогоны) ---
+*.log
+pytest*.txt
+uvicorn_*.txt
+live*_out.txt
+live*_err.txt
+llm_out.txt
+llm_err.txt

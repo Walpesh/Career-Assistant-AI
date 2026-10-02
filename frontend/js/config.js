@@ -48,10 +48,19 @@ export const CONFIG = {
 
   /** Максимальная задержка реконнекта WebSocket (мс). */
   RECONNECT_MAX_DELAY_MS: 15000,
+  /** Интервал heartbeat WebSocket (пинг клиент → понг сервер), мс. */
+  WS_HEARTBEAT_INTERVAL_MS: 20000,
   /** Максимум записей в реал-тайм журнале. */
   LOG_LIMIT: 400,
   /** Порог матчинга по умолчанию (совпадает с DEFAULT user_profiles.match_threshold). */
-  DEFAULT_THRESHOLD: 70
+  DEFAULT_THRESHOLD: 70,
+  /**
+   * Лимит compact_resume в символах — должен совпадать с backend
+   * COMPACT_RESUME_MAX_CHARS (docs/05_LLM_PIPELINE.md §3).
+   */
+  COMPACT_MAX_CHARS: 2000,
+  /** Лимит полного resume_text в символах (docs/02 §3.2). */
+  RESUME_MAX_CHARS: 5000
 };
 
 /** URL WebSocket: ws(s)://host/<api-base>/ws?token=... (docs/03_API_CONTRACTS.md §8). */

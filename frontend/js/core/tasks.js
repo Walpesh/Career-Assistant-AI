@@ -53,17 +53,39 @@ export function getCurrentTasks() {
 }
 
 /** Подписка на WS-события задач + первичная загрузка. */
+let initialized = false;
+
 export async function initTaskTracking() {
+  // Идемпотентно: enterApp() вызывается и при повторном входе, а каждый
+  // новый вызов раньше добавлял ещё один набор подписок на ws:task.* —
+  // события начислись N раз, счётчики и лог «дёргались».
+  if (initialized) {
+    await refreshTasks();
+    return;
+  }
+  initialized = true;
+
   on('ws:task.created', (payload) => {
     if (!payload?.task_id) return;
-    upsert({ id: payload.task_id, task_type: payload.task_type, status: payload.status || 'pending', progress_current: 0, progress_total: 0 });
+    upsert({
+      id: payload.task_id,
+      task_type: payload.task_type,
+      status: payload.status || 'pending',
+      progress_current: 0,
+      progress_total: 0,
+      created_at: payload.created_at || new Date().toISOString()
+    });
   });
 
   on('ws:task.progress', (payload) => {
     if (!payload?.task_id) return;
+    const existing = currentTasks.find((item) => item.id === payload.task_id);
+    // waiting_captcha — терминальное для прогресса состояние (docs/04 §5):
+    // событие прогресса не должно «оживлять» задачу до ручного вмешательства.
+    const status = existing?.status === 'waiting_captcha' ? 'waiting_captcha' : 'processing';
     upsert({
       id: payload.task_id,
-      status: 'processing',
+      status,
       progress_current: payload.current,
       progress_total: payload.total,
       progress_message: payload.message,
@@ -79,6 +101,11 @@ export async function initTaskTracking() {
   on('ws:task.failed', (payload) => {
     if (!payload?.task_id) return;
     upsert({ id: payload.task_id, status: 'failed', error_message: payload.error || 'Неизвестная ошибка', finished_at: new Date().toISOString() });
+  });
+
+  // Переподключение WS: события могли потеряться — перечитываем задачи.
+  on('ws:resync', () => {
+    refreshTasks();
   });
 
   // Держим локальную копию синхронно с общим store.

@@ -20,7 +20,7 @@ from app.core.config import settings
 from app.db.models import User, UserProfile
 from app.db.session import get_db
 from app.modules.auth.deps import get_current_user
-from app.modules.user_profile.llm import LLMError, compress_resume_text
+from app.modules.user_profile.llm import LLMError, compress_resume_text, trim_to_limit
 from app.modules.user_profile.schemas import ProfileOut, ProfileUpdate
 
 router = APIRouter(prefix="/profile", tags=["profile"])
@@ -103,7 +103,10 @@ async def _compress(user: User, db: AsyncSession) -> UserProfile:
             "LLM_UNAVAILABLE",
         ) from exc
 
-    profile.compact_resume = compact[: settings.compact_resume_max_chars]
+    # Запись в БД: лимит гарантируется и здесь (единая точка обрезки),
+    # поэтому в user_profiles.compact_resume попадает ровно то, что вернул LLM,
+    # но не длиннее COMPACT_RESUME_MAX_CHARS.
+    profile.compact_resume = trim_to_limit(compact, settings.compact_resume_max_chars)
     await db.commit()
     await db.refresh(profile)
     return profile

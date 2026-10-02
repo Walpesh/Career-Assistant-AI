@@ -26,6 +26,35 @@ function buildQuery(params = {}) {
   return qs ? `?${qs}` : '';
 }
 
+/** Один общий refresh на все параллельные 401 (docs/03 §2). */
+let refreshPromise = null;
+
+/**
+ * Обновить access-токен через refresh-ротацию.
+ * @returns {Promise<boolean>} true — новый токен получен и сохранён.
+ */
+function refreshAccessToken() {
+  if (!session.refreshToken) return Promise.resolve(false);
+  if (!refreshPromise) {
+    refreshPromise = request(
+      'POST',
+      '/auth/refresh',
+      { refresh_token: session.refreshToken },
+      { skipAuth: true }
+    )
+      .then((data) => {
+        if (!data?.access_token) return false;
+        session.setTokens({ access_token: data.access_token, refresh_token: data.refresh_token });
+        return true;
+      })
+      .catch(() => false)
+      .finally(() => {
+        refreshPromise = null;
+      });
+  }
+  return refreshPromise;
+}
+
 async function request(method, path, body, options = {}) {
   const headers = { Accept: 'application/json' };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -60,11 +89,15 @@ async function request(method, path, body, options = {}) {
 
   if (!response.ok) {
     // Единый формат ошибок: { detail, error_code } (docs/03 §1)
-    if (response.status === 401) {
-      if (!options.skipAuth) {
-        session.clear();
-        emit('auth:expired');
+    if (response.status === 401 && !options.skipAuth) {
+      // Access-токен истёк: пробуем refresh-ротацию и повторяем запрос один раз.
+      // Раньше здесь был безусловный выход на экран входа — пользователя
+      // выбрасывало из приложения каждые ACCESS_TOKEN_EXPIRE_MINUTES.
+      if (!options._retried && (await refreshAccessToken())) {
+        return request(method, path, body, { ...options, _retried: true });
       }
+      session.clear();
+      emit('auth:expired');
     }
     throw new ApiError(response.status, data?.detail || response.statusText, data?.error_code);
   }

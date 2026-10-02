@@ -2,7 +2,7 @@
 
 «Этап 0. Конвертация резюме» — обязательный метод: создаётся компактная версия
 резюме, чтобы не раздувать контекст модели. Промпт — дословно из docs/05 §3
-(лимит объёма берётся из настройки COMPACT_RESUME_MAX_CHARS; по умолчанию 1000
+(лимит объёма берётся из настройки COMPACT_RESUME_MAX_CHARS; по умолчанию 2000
 символов согласно TASK, docs/05 рекомендует 1800–2200).
 
 Движок: Ollama (`/api/generate`, stream=false), температура — из docs/05 §8.
@@ -16,7 +16,7 @@ import httpx
 
 from app.core.config import settings
 
-__all__ = ["LLMError", "compress_resume_text", "COMPRESS_PROMPT_TEMPLATE"]
+__all__ = ["LLMError", "compress_resume_text", "trim_to_limit", "COMPRESS_PROMPT_TEMPLATE"]
 
 
 class LLMError(Exception):
@@ -36,6 +36,29 @@ COMPRESS_PROMPT_TEMPLATE = """Ты — опытный HR-ассистент и �
 
 Резюме кандидата:
 {resume_text}"""
+
+
+def trim_to_limit(text: str, limit: int) -> str:
+    """Обрезать текст до limit символов, не разрывая слово/предложение.
+
+    Используется и в LLM-ответе, и при записи в БД (единая точка обрезки),
+    поэтому результат всегда ≤ limit символов, а граница режет по
+    ближайшему пробелу или знаку конца предложения.
+    """
+    value = (text or "").strip()
+    if limit <= 0 or len(value) <= limit:
+        return value
+
+    cut = value[:limit]
+    # Точка/вопрос/восклицание/перевод строки — предпочтительная граница.
+    for separator in (". ", ".\n", "\n", "; ", ", "):
+        position = cut.rfind(separator)
+        if position >= limit // 2:
+            return cut[: position + 1].strip()
+    position = cut.rfind(" ")
+    if position >= limit // 2:
+        return cut[:position].strip()
+    return cut.strip()
 
 
 async def compress_resume_text(
@@ -80,4 +103,4 @@ async def compress_resume_text(
         raise LLMError("Ollama вернула пустой ответ")
 
     # Гарантируем лимит из TASK даже при «болтливой» модели.
-    return text[:limit]
+    return trim_to_limit(text, limit)

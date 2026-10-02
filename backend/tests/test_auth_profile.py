@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib
 
+from app.core.config import settings
 from app.modules.user_profile import llm as llm_module
 
 # Модуль роутера (пакет user_profile экспортирует APIRouter под именем `router`,
@@ -217,8 +218,9 @@ async def test_profile_validation_errors(client):
 
 
 async def test_compress_resume_updates_compact_resume(client, monkeypatch):
-    """Синхронный вызов LLM: compact_resume сохраняется с лимитом ≤1000 символов."""
-    long_answer = "Сжатое резюме кандидата. " * 80  # > 1000 символов
+    """Синхронный вызов LLM: compact_resume сохраняется с лимитом ≤2000 символов."""
+    # Ответ «болтливой» модели: заметно длиннее лимита, чтобы проверить обрезку.
+    long_answer = "Сжатое резюме кандидата. " * 120  # > 2000 символов
 
     async def fake_compress(resume_text: str, *, max_chars=None, timeout=None) -> str:
         assert RESUME_TEXT in resume_text  # в промпт уходит исходное резюме
@@ -235,11 +237,34 @@ async def test_compress_resume_updates_compact_resume(client, monkeypatch):
     assert response.status_code == 200, response.text
     compact = response.json()["compact_resume"]
     assert compact
-    assert len(compact) <= 1000  # лимит COMPACT_RESUME_MAX_CHARS (TASK)
+    assert len(compact) <= 2000  # лимит COMPACT_RESUME_MAX_CHARS (TASK)
+
+    # Лимит вырос до 2000 символов: результат больше не обрезается до 1000.
+    assert len(compact) > 1000, f"ожидалось >1000 символов, получено {len(compact)}"
 
     # GET /profile отдаёт сохранённый compact_resume.
     got = await client.get(f"{API}/profile", headers=headers)
     assert got.json()["compact_resume"] == compact
+def test_trim_to_limit_respects_limit_and_word_boundary():
+    """docs/05 §3: обрезка compact_resume не превышает лимит и не рвёт слова."""
+    from app.modules.user_profile.llm import trim_to_limit
+
+    limit = settings.compact_resume_max_chars
+    assert limit == 2000  # TASK: лимит compact_resume — 2000 символов
+
+    short = "Краткое резюме."
+    assert trim_to_limit(short, limit) == short
+
+    long_text = "Опыт разработки. " * 500  # заметно длиннее лимита
+    trimmed = trim_to_limit(long_text, limit)
+    assert len(trimmed) <= limit
+    assert len(trimmed) > limit // 2  # не выбрасываем половину текста
+    assert not trimmed.endswith(" ")  # граница режет по пробелу/точке
+    assert long_text.startswith(trimmed)  # текст не искажается, только обрезается
+
+    # Вырожденные входы не падают.
+    assert trim_to_limit("", limit) == ""
+    assert trim_to_limit(long_text, 0) == long_text.strip()
 
 
 async def test_convert_resume_alias_endpoint(client, monkeypatch):

@@ -5,7 +5,8 @@
    ============================================================ */
 
 import { api } from '../core/api.js';
-import { getState, subscribe } from '../core/state.js';
+import { on } from '../core/bus.js';
+import { getState, subscribe, getMatchThreshold, setMatchThreshold } from '../core/state.js';
 import { loadPartial } from '../core/partials.js';
 import { popup } from '../components/fadeout-action-popup.js';
 import { TagInput } from '../components/tag-input.js';
@@ -21,7 +22,6 @@ const HH_VACANCY_URL = /^https?:\/\/([\w-]+\.)*hh\.ru\/vacancy\/\d+/i;
 let els = {};
 let keywordsInput = null;
 let mounted = false;
-let thresholdTouched = false;
 const cardMap = new Map();
 
 export async function mount() {
@@ -58,7 +58,8 @@ export async function mount() {
   setMode('auto');
 
   els.autoThreshold.addEventListener('input', () => {
-    thresholdTouched = true;
+    // Единый источник порога (state) — профиль подхватит это же значение.
+    setMatchThreshold(els.autoThreshold.value, 'dashboard');
     els.autoThresholdValue.textContent = `${els.autoThreshold.value}%`;
   });
 
@@ -68,23 +69,24 @@ export async function mount() {
   els.refreshButton.addEventListener('click', () => refreshTasks());
   els.list.addEventListener('click', handleTaskListClick);
 
-  // Порог матчинга по умолчанию берётся из профиля (docs/02 §3.2).
-  applyProfileThreshold(getState());
-  subscribe((state) => {
-    applyProfileThreshold(state);
-    renderTasks();
-  });
+  // Порог матчинга по умолчанию берётся из профиля (docs/02 §3.2) и
+  // синхронизируется с вкладкой «Моё резюме» без конфликтов.
+  syncThresholdFromStore();
+  on('match:threshold', ({ source }) => syncThresholdFromStore(source));
+  subscribe(() => renderTasks());
   await refreshTasks();
 }
 
-/** Подставить match_threshold из профиля, пока пользователь не менял слайдер. */
-function applyProfileThreshold(state) {
-  if (thresholdTouched) return;
-  const threshold = Number(state?.profile?.match_threshold);
-  if (Number.isFinite(threshold) && threshold >= 0) {
-    els.autoThreshold.value = clamp(threshold, 0, 100);
-    els.autoThresholdValue.textContent = `${els.autoThreshold.value}%`;
-  }
+/**
+ * Показать актуальный порог матчинга. Собственные изменения игнорируем —
+ * иначе слайдер «прыгал» бы под рукой у пользователя.
+ */
+function syncThresholdFromStore(source) {
+  if (!els.autoThreshold || source === 'dashboard') return;
+  const threshold = clamp(getMatchThreshold(), 0, 100);
+  if (Number(els.autoThreshold.value) === threshold) return;
+  els.autoThreshold.value = threshold;
+  els.autoThresholdValue.textContent = `${threshold}%`;
 }
 
 /* ---------- Режимы ---------- */
@@ -115,7 +117,7 @@ async function submitAuto() {
 
   const payload = {
     keywords,
-    match_threshold: clamp(Number(els.autoThreshold.value) || 0, 0, 100),
+    match_threshold: clamp(getMatchThreshold(), 0, 100),
     max_pages: clamp(Number(els.autoMaxPages.value) || 3, 1, 10)
   };
   const employment = chipValues('employment');
