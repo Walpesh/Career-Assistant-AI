@@ -50,6 +50,14 @@ export const CONFIG = {
   RECONNECT_MAX_DELAY_MS: 15000,
   /** Интервал heartbeat WebSocket (пинг клиент → понг сервер), мс. */
   WS_HEARTBEAT_INTERVAL_MS: 20000,
+  /**
+   * Порог «молчания» WebSocket, мс: если за это время не пришёл ни один
+   * кадр (включая pong), канал считается мёртвым и переподключается.
+   * Нужен для mobile Safari: iOS закрывает сокет в фоне, не вызывая onclose.
+   */
+  WS_STALE_TIMEOUT_MS: 45000,
+  /** Как часто watchdog проверяет «молчание» канала, мс. */
+  WS_WATCHDOG_INTERVAL_MS: 15000,
   /** Максимум записей в реал-тайм журнале. */
   LOG_LIMIT: 400,
   /** Порог матчинга по умолчанию (совпадает с DEFAULT user_profiles.match_threshold). */

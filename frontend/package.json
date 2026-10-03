@@ -1,0 +1,20 @@
+{
+  "name": "career-assistant-ai-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "SPA Career-Assistant-AI (HTML5 + Tailwind CSS CLI + Vanilla JS ES-модули)",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build:css": "tailwindcss -c ./tailwind.config.js -i ./src/input.css -o ./css/styles.min.css --minify",
+    "watch:css": "tailwindcss -c ./tailwind.config.js -i ./src/input.css -o ./css/styles.min.css --watch",
+    "build": "npm run build:css && node tools/build-assets.mjs",
+    "verify": "node tools/build-assets.mjs --check"
+  },
+  "devDependencies": {
+    "tailwindcss": "3.4.17"
+  }
+}

@@ -95,9 +95,19 @@ async function request(method, path, body, options = {}) {
       session.clear();
       emit('auth:expired');
     }
-    throw new ApiError(response.status, data?.detail || response.statusText, data?.error_code);
+    const error = new ApiError(response.status, data?.detail || response.statusText, data?.error_code);
+    // Сигнал для баннера деградации: LLM_UNAVAILABLE / QUEUE_UNAVAILABLE и т.п.
+    emit('api:error', {
+      status: error.status,
+      errorCode: error.errorCode,
+      message: error.message,
+      path
+    });
+    throw error;
   }
 
+  // Успешный ответ — снимаем предположение о недоступности бэкенда.
+  emit('api:healthy', { path });
   return data;
 }
 

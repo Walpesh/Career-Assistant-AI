@@ -1,0 +1,62 @@
+/* ============================================================
+   Tailwind CLI entrypoint Career-Assistant-AI.
+
+   Собирается в статический css/styles.min.css:
+       npm run build:css      # production, --minify
+       npm run watch:css      # разработка, без минификации
+
+   Раньше те же правила лежали в <style type="text/tailwindcss"> и в
+   инлайновом `tailwind.config` внутри index.html, а компилятором был
+   Play CDN (cdn.tailwindcss.com). В production внешний CDN недопустим
+   (docs/01_ARCHITECTURE.md §10), поэтому директивы @apply живут здесь,
+   а тема — в tailwind.config.js.
+
+   Порядок разделов:
+     1. fonts.css   — @font-face для self-hosted Inter (импортируется первым,
+        чтобы preflight не менял подключение шрифта);
+     2. custom.css  — кастомные анимации и компоненты вне Tailwind
+        (Fadeout-action-popup, прогресс-бары, скроллбары, tag-input);
+     3. @tailwind base — preflight (сброс браузерных стилей);
+     4. @tailwind components + @layer components — компонентные классы UI;
+     5. @tailwind utilities — утилиты, используемые прямо в разметке.
+   ============================================================ */
+
+@import "./fonts.css";
+@import "./custom.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer components {
+  /* Компонентные классы интерфейса (перенесены из <style type="text/tailwindcss">). */
+  .card { @apply rounded-2xl border border-slate-800/80 bg-slate-900/60; }
+  .card-title { @apply text-sm font-semibold tracking-wide text-slate-200; }
+  .hint { @apply text-xs leading-relaxed text-slate-500; }
+  .input { @apply w-full rounded-lg border border-slate-700/80 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 placeholder-slate-600 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-50; }
+  .select { @apply w-full rounded-lg border border-slate-700/80 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20; }
+  .btn, .btn-primary, .btn-secondary, .btn-ghost, .btn-danger { @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40 disabled:cursor-not-allowed disabled:opacity-50; }
+  .btn-primary { @apply bg-indigo-600 text-white hover:bg-indigo-500 active:bg-indigo-700; }
+  .btn-secondary { @apply border border-slate-700 bg-slate-800/80 text-slate-100 hover:bg-slate-700/80; }
+  .btn-ghost { @apply border border-transparent text-slate-300 hover:bg-slate-800/70 hover:text-slate-100; }
+  .btn-danger { @apply bg-rose-600/90 text-white hover:bg-rose-500; }
+  .btn-sm { @apply px-2.5 py-1.5 text-xs; }
+  .chip { @apply inline-flex cursor-pointer select-none items-center gap-1.5 rounded-full border border-slate-700/80 bg-slate-900/70 px-3 py-1 text-xs font-medium text-slate-300 transition hover:border-slate-600 hover:text-slate-100; }
+  .chip-active { @apply border-indigo-500/60 bg-indigo-500/15 text-indigo-200 hover:border-indigo-400/70 hover:text-indigo-100; }
+  .mode-card { @apply flex w-full items-start gap-3 rounded-xl border border-slate-800/80 bg-slate-900/50 p-4 text-left transition hover:border-slate-700 hover:bg-slate-900/80; }
+  .mode-card-active { @apply border-indigo-500/60 bg-indigo-500/10 shadow-glow; }
+  .badge { @apply inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-medium leading-4; }
+  .nav-btn { @apply flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-slate-400 transition hover:bg-slate-800/60 hover:text-slate-100; }
+  .nav-btn-active { @apply bg-indigo-500/15 text-indigo-200 hover:bg-indigo-500/20 hover:text-indigo-100; }
+  .overlay { @apply fixed inset-0 z-50 flex overflow-hidden; }
+  .overlay-backdrop { @apply absolute inset-0 bg-slate-950/70 backdrop-blur-sm animate-fade-in; }
+  /* min-h-0 обязателен: без него flex-элемент не сжимается, прокручиваемое
+     содержимое выдавливает шапку и кнопки за пределы панели. */
+  .overlay-panel { @apply relative z-10 m-auto flex max-h-[86vh] min-h-0 w-[calc(100%-2rem)] max-w-2xl flex-col overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl animate-slide-up; }
+  .overlay-panel-right { @apply relative z-10 ml-auto flex h-full max-h-full min-h-0 w-full max-w-xl flex-col overflow-hidden border-l border-slate-800 bg-slate-900 shadow-2xl; }
+  /* Шапка/подвал панели не сжимаются, тело скроллится независимо. */
+  .overlay-header { @apply flex shrink-0 items-start gap-3 border-b border-slate-800 p-4; }
+  .overlay-body { @apply min-h-0 flex-1 overflow-y-auto overscroll-contain; }
+  .overlay-footer { @apply flex shrink-0 flex-wrap items-center gap-2 border-t border-slate-800 p-4; }
+  .skeleton { @apply animate-pulse rounded-lg bg-slate-800/70; }
+}

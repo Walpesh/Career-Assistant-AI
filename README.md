@@ -35,9 +35,17 @@
 
 ## Быстрый старт
 
-### Frontend (статическая вёрстка, без сборки)
+### Frontend
+
+CSS собирается Tailwind CLI в статический `frontend/css/styles.min.css`
+(Play CDN не используется — он исполняет JS на клиенте и несовместим со строгой CSP).
+Готовый `styles.min.css` лежит в репозитории, поэтому для обычного запуска Node.js не нужен.
 
 ```powershell
+# правка стилей: скомпилировать заново и обновить SRI-хэши
+cd frontend; npm ci; npm run build
+
+# локальный просмотр
 python -m http.server 5500 --directory frontend
 ```
 
@@ -46,6 +54,9 @@ python -m http.server 5500 --directory frontend
   backend не нужен (для проверки вёрстки и реал-тайм компонентов).
 - `http://localhost:5500/?api=http://localhost:8000/api/v1` — явное указание адреса API
   (сохраняется в localStorage).
+
+Подробно о сборке, CSP, self-hosted шрифтах и кэшировании — `frontend/README.md`
+и `docs/01_ARCHITECTURE.md` §8.
 
 ### Backend (скелет приложения)
 

@@ -11,6 +11,7 @@ import { on } from './core/bus.js';
 import { setState } from './core/state.js';
 import { initTaskTracking } from './core/tasks.js';
 import { loadPartial } from './core/partials.js';
+import { initDegradationBanner, stopDegradationBanner } from './core/degradation.js';
 import { RealtimeClient } from './core/ws.js';
 import { DemoSocket, installMock } from './core/mock.js';
 import { popup } from './components/fadeout-action-popup.js';
@@ -71,6 +72,9 @@ async function boot() {
   shell.initShell();
 
   logPanel.initLogPanel();
+
+  // Баннер деградации: LLM/очередь/WS недоступны — предупреждаем, не блокируя.
+  initDegradationBanner();
 
   // WS-событие `popup` → кастомный Fadeout-action-popup (docs/03 §8).
   on('ws:popup', (payload = {}) => {
@@ -136,6 +140,8 @@ async function enterApp() {
 function showAuthScreen() {
   document.getElementById('app-screen').classList.add('hidden');
   document.getElementById('auth-screen').classList.remove('hidden');
+  // Баннер деградации относится к активной сессии — на экране входа он не нужен.
+  stopDegradationBanner();
   try {
     realtime.close();
   } catch {

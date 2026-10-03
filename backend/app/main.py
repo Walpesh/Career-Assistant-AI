@@ -20,6 +20,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.gzip import DEFAULT_EXCLUDED_CONTENT_TYPES
 from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -222,7 +223,14 @@ def create_app() -> FastAPI:
     app.add_middleware(RequestIDMiddleware)
 
     # GZip-сжатие (docs/03 — уменьшение трафика JSON-ответов).
-    app.add_middleware(GZipMiddleware, minimum_size=settings.gzip_min_size)
+    # HTML намеренно исключён: SecurityHeadersMiddleware подставляет CSP-nonce
+    # в тело ответа, а на сжатых байтах плейсхолдер __CSP_NONCE__ не найти.
+    # С тем же ограничением настроен nginx (text/html не входит в gzip_types).
+    app.add_middleware(
+        GZipMiddleware,
+        minimum_size=settings.gzip_min_size,
+        exclude_content_types=(*DEFAULT_EXCLUDED_CONTENT_TYPES, "text/html", "application/xhtml+xml"),
+    )
 
     # Redis sliding-window rate limiting (429 при превышении лимитов).
     app.add_middleware(RateLimitMiddleware)

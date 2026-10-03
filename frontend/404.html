@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="ru" class="h-full">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex" />
+  <meta name="description" content="Страница не найдена — Career-Assistant-AI" />
+  <title>Страница не найдена — Career-Assistant-AI</title>
+  <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+
+  <!--
+    Та же собранная статика, что и в index.html, с SRI-хэшем.
+    Правила вынесены в deploy/nginx.conf: /404.html отдаётся с
+    `Cache-Control: no-cache`, чтобы страница всегда была актуальной.
+  -->
+  <link rel="stylesheet" href="/css/styles.min.css"
+        integrity="sha384-rdO6tr4tmG1DwkZqdxLEmlQY301yrQoOnirzelmya0bDE5O1DB4Ucd7ezhRVZLKc"
+        crossorigin="anonymous" />
+  <link rel="preload" href="/fonts/inter-latin.3100e775.woff2" as="font" type="font/woff2"
+        integrity="sha384-l0ql7Q1zqvX5klAVRwYjcMVCkCxg5dMTdghsIlC3pYkX6wwEHerh2bP/4yAao3Im"
+        crossorigin="anonymous" />
+  <link rel="preload" href="/fonts/inter-cyrillic.71d5ee93.woff2" as="font" type="font/woff2"
+        integrity="sha384-0TIui+vzWhVZMl7iUvLEvfLe0BvgafwfPJsBipXepNH7XIVkp1kGdXEZmLw5x82g"
+        crossorigin="anonymous" />
+</head>
+<body class="h-full bg-slate-950 font-sans text-slate-100 antialiased">
+  <main class="flex min-h-full flex-col items-center justify-center px-4 py-16 text-center">
+    <img src="/assets/favicon.svg" alt="" width="56" height="56"
+         class="mb-6 h-14 w-14 rounded-2xl shadow-glow" aria-hidden="true" />
+
+    <p class="text-xs font-semibold uppercase tracking-[0.3em] text-indigo-400">Ошибка 404</p>
+    <h1 class="mt-3 text-2xl font-bold sm:text-3xl">Страница не найдена</h1>
+    <p class="mt-3 max-w-md text-sm leading-relaxed text-slate-400">
+      Возможно, адрес введён с ошибкой или страница была перемещена.
+      Если вы открыли её из закладки — вернитесь на главную: состояние
+      сессии и фоновые задачи хранятся на сервере.
+    </p>
+
+    <div class="mt-8 flex flex-wrap items-center justify-center gap-3">
+      <a href="/" class="btn-primary">На главную</a>
+      <a href="/" class="btn-secondary">Повторить вход</a>
+    </div>
+
+    <noscript>
+      <p class="mt-6 rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-xs text-rose-200">
+        Для работы интерфейса Career-Assistant-AI включите JavaScript.
+      </p>
+    </noscript>
+  </main>
+</body>
+</html>

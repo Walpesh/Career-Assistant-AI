@@ -90,9 +90,17 @@ def run_checks() -> int:
 
         page.goto(BASE_URL, wait_until="load")
         page.wait_for_selector("#login-submit", timeout=15000)
+
+        # Диагностика регрессий: печатаем ошибки консоли сразу, чтобы
+        # падение на следующем шаге не выглядело загадочным таймаутом.
+        if console_errors:
+            print("    (ошибки консоли на экране авторизации)")
+            for err in console_errors[:10]:
+                print(f"      ! {err}")
         check(page.is_visible("#auth-screen"), "Экран авторизации отображается")
 
-        # Tailwind подключился (CDN сгенерировал CSS): у карточки входа есть скругление.
+        # Tailwind применился: у карточки входа есть скругление
+        # (стили приходят из собранного css/styles.min.css, не из CDN).
         card_radius = page.evaluate(
             "getComputedStyle(document.querySelector('#auth-tabs').parentElement).borderRadius"
         )

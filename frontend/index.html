@@ -7,71 +7,61 @@
   <title>Career-Assistant-AI</title>
   <link rel="icon" type="image/svg+xml" href="assets/favicon.svg" />
 
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    /* Базовая тема Tailwind (Play CDN). Палитра: slate + индиго-акцент. */
-    tailwind.config = {
-      theme: {
-        extend: {
-          fontFamily: {
-            sans: ['Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'Arial', 'sans-serif']
-          },
-          boxShadow: {
-            'glow': '0 0 0 1px rgba(99,102,241,.35), 0 12px 40px -14px rgba(99,102,241,.55)'
-          },
-          keyframes: {
-            'fade-in': { '0%': { opacity: '0' }, '100%': { opacity: '1' } },
-            'slide-up': { '0%': { opacity: '0', transform: 'translateY(10px)' }, '100%': { opacity: '1', transform: 'translateY(0)' } }
-          },
-          animation: {
-            'fade-in': 'fade-in .25s ease-out both',
-            'slide-up': 'slide-up .25s ease-out both'
-          }
-        }
-      }
-    };
-  </script>
-  <style type="text/tailwindcss">
-    /* Компонентные классы интерфейса (компилируются Play CDN из @apply) */
-    .card { @apply rounded-2xl border border-slate-800/80 bg-slate-900/60; }
-    .card-title { @apply text-sm font-semibold tracking-wide text-slate-200; }
-    .hint { @apply text-xs leading-relaxed text-slate-500; }
-    .input { @apply w-full rounded-lg border border-slate-700/80 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 placeholder-slate-600 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-50; }
-    .select { @apply w-full rounded-lg border border-slate-700/80 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20; }
-    .btn, .btn-primary, .btn-secondary, .btn-ghost, .btn-danger { @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40 disabled:cursor-not-allowed disabled:opacity-50; }
-    .btn-primary { @apply bg-indigo-600 text-white hover:bg-indigo-500 active:bg-indigo-700; }
-    .btn-secondary { @apply border border-slate-700 bg-slate-800/80 text-slate-100 hover:bg-slate-700/80; }
-    .btn-ghost { @apply border border-transparent text-slate-300 hover:bg-slate-800/70 hover:text-slate-100; }
-    .btn-danger { @apply bg-rose-600/90 text-white hover:bg-rose-500; }
-    .btn-sm { @apply px-2.5 py-1.5 text-xs; }
-    .chip { @apply inline-flex cursor-pointer select-none items-center gap-1.5 rounded-full border border-slate-700/80 bg-slate-900/70 px-3 py-1 text-xs font-medium text-slate-300 transition hover:border-slate-600 hover:text-slate-100; }
-    .chip-active { @apply border-indigo-500/60 bg-indigo-500/15 text-indigo-200 hover:border-indigo-400/70 hover:text-indigo-100; }
-    .mode-card { @apply flex w-full items-start gap-3 rounded-xl border border-slate-800/80 bg-slate-900/50 p-4 text-left transition hover:border-slate-700 hover:bg-slate-900/80; }
-    .mode-card-active { @apply border-indigo-500/60 bg-indigo-500/10 shadow-glow; }
-    .badge { @apply inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-medium leading-4; }
-    .nav-btn { @apply flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-slate-400 transition hover:bg-slate-800/60 hover:text-slate-100; }
-    .nav-btn-active { @apply bg-indigo-500/15 text-indigo-200 hover:bg-indigo-500/20 hover:text-indigo-100; }
-    .overlay { @apply fixed inset-0 z-50 flex overflow-hidden; }
-    .overlay-backdrop { @apply absolute inset-0 bg-slate-950/70 backdrop-blur-sm animate-fade-in; }
-    /* min-h-0 обязателен: без него flex-элемент не сжимается, прокручиваемое
-       содержимое выдавливает шапку и кнопки за пределы панели. */
-    .overlay-panel { @apply relative z-10 m-auto flex max-h-[86vh] min-h-0 w-[calc(100%-2rem)] max-w-2xl flex-col overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl animate-slide-up; }
-    .overlay-panel-right { @apply relative z-10 ml-auto flex h-full max-h-full min-h-0 w-full max-w-xl flex-col overflow-hidden border-l border-slate-800 bg-slate-900 shadow-2xl; }
-    /* Шапка/подвал панели не сжимаются, тело скроллится независимо. */
-    .overlay-header { @apply flex shrink-0 items-start gap-3 border-b border-slate-800 p-4; }
-    .overlay-body { @apply min-h-0 flex-1 overflow-y-auto overscroll-contain; }
-    .overlay-footer { @apply flex shrink-0 flex-wrap items-center gap-2 border-t border-slate-800 p-4; }
-    .skeleton { @apply animate-pulse rounded-lg bg-slate-800/70; }
-  </style>
-  <link rel="stylesheet" href="css/styles.css" />
+  <!--
+    Статика собрана Tailwind CLI в css/styles.min.css (frontend/src/input.css +
+    tailwind.config.js). Play CDN (cdn.tailwindcss.com) в production запрещён:
+    он исполняет JS на клиенте, что несовместимо с CSP без 'unsafe-inline',
+    плюс это лишний сетевой запрос к чужому хосту.
+
+    SRI (integrity + crossorigin) защищает от подмены файла на этапе доставки.
+    Хэш пересчитывается командой `npm run build` (tools/build-assets.mjs).
+  -->
+  <link rel="stylesheet" href="css/styles.min.css"
+        integrity="sha384-rdO6tr4tmG1DwkZqdxLEmlQY301yrQoOnirzelmya0bDE5O1DB4Ucd7ezhRVZLKc"
+        crossorigin="anonymous" />
+
+  <!--
+    Inter self-hosted (152-ФЗ ст. 18.1 / GDPR: Google Fonts передавал IP на
+    сторонний хост). Шрифты — content-hashed, поэтому кэшируются на год
+    (deploy/nginx.conf, location /fonts/). Preload убирает FOIT на латинице.
+  -->
+  <link rel="preload" href="fonts/inter-latin.3100e775.woff2" as="font" type="font/woff2"
+        integrity="sha384-l0ql7Q1zqvX5klAVRwYjcMVCkCxg5dMTdghsIlC3pYkX6wwEHerh2bP/4yAao3Im"
+        crossorigin="anonymous" />
+  <link rel="preload" href="fonts/inter-cyrillic.71d5ee93.woff2" as="font" type="font/woff2"
+        integrity="sha384-0TIui+vzWhVZMl7iUvLEvfLe0BvgafwfPJsBipXepNH7XIVkp1kGdXEZmLw5x82g"
+        crossorigin="anonymous" />
 
 </head>
 <body class="h-full bg-slate-950 font-sans text-slate-100 antialiased selection:bg-indigo-500/30">
+  <!--
+    Единственный inline-скрипт приложения: он несёт nonce, который подставляет
+    сервер (nginx $request_id / FastAPI — см. app/core/csp.py), и поэтому
+    проходит строгую CSP без 'unsafe-inline' в script-src.
+
+    Задача — задать window.APP_CONFIG до загрузки модулей: js/config.js читает
+    его при инициализации, чтобы адрес API можно было задать на сервере,
+    не пересобирая фронтенд. Всё остальное вынесено в js/ (ES-модули),
+    потому что module-скрипты CSP разрешает по 'self' без nonce.
+  -->
+  <script nonce="__CSP_NONCE__">
+    window.APP_CONFIG = window.APP_CONFIG || {};
+  </script>
+
   <!-- ===== Глобальный контейнер уведомлений (кастомный компонент) ===== -->
   <fadeout-action-popup id="popups" aria-label="Уведомления"></fadeout-action-popup>
+
+  <!--
+    Баннер деградации сервиса: «LLM недоступна», «очередь недоступна»,
+    «соединение потеряно». Контейнер пуст и скрыт, пока всё исправно —
+    его наполняет js/core/degradation.js по данным GET /health/ready
+    и WS-событий (docs/03_API_CONTRACTS.md §8).
+
+    role=status + aria-live=polite: появление баннера объявляется
+    скринридером, но не перебивает текущую задачу.
+  -->
+  <div id="service-banner" class="fixed inset-x-0 top-0 z-50 hidden"
+       role="status" aria-live="polite" aria-atomic="true"></div>
 
   <noscript>
     <div class="m-6 rounded-xl border border-rose-500/40 bg-rose-500/10 p-4 text-sm text-rose-200">
@@ -194,8 +184,9 @@
               <span class="pulse-dot h-2 w-2 rounded-full bg-indigo-400"></span>
               <span><b id="active-tasks-count">0</b> в работе</span>
             </div>
-            <div id="ws-status" class="flex items-center gap-2 rounded-full border border-slate-700/80 bg-slate-900/70 px-3 py-1.5 text-xs text-slate-400">
-              <span id="ws-status-dot" class="h-2 w-2 rounded-full bg-slate-500"></span>
+            <div id="ws-status" class="flex items-center gap-2 rounded-full border border-slate-700/80 bg-slate-900/70 px-3 py-1.5 text-xs text-slate-400"
+                 role="status" aria-live="polite" aria-label="Состояние WebSocket-соединения">
+              <span id="ws-status-dot" class="h-2 w-2 rounded-full bg-slate-500" aria-hidden="true"></span>
               <span id="ws-status-label" class="hidden sm:inline">Подключение…</span>
             </div>
             <button id="btn-log-toggle" type="button" class="btn-secondary btn-sm" title="Журнал реал-тайм">Журнал</button>
@@ -232,8 +223,10 @@
             <button id="log-close" type="button" class="btn-ghost btn-sm xl:hidden" title="Закрыть журнал">✕</button>
           </div>
         </div>
-        <div id="log-active-tasks" class="hidden shrink-0 space-y-2 border-b border-slate-800/80 p-3"></div>
-        <ol id="log-list" class="scroll-slim flex-1 space-y-1 overflow-y-auto p-3 font-mono text-[11px] leading-relaxed" aria-live="polite"></ol>
+        <div id="log-active-tasks" class="hidden shrink-0 space-y-2 border-b border-slate-800/80 p-3"
+             role="group" aria-label="Прогресс активных задач"></div>
+        <ol id="log-list" class="scroll-slim flex-1 space-y-1 overflow-y-auto p-3 font-mono text-[11px] leading-relaxed"
+            role="log" aria-live="polite" aria-relevant="additions" aria-label="Журнал событий реального времени"></ol>
         <div class="shrink-0 border-t border-slate-800/80 p-2 text-center text-[10px] text-slate-600">
           WS: task.* · vacancy.updated · analysis.ready · letter.ready · popup
         </div>
@@ -275,6 +268,10 @@
   <!-- Контейнер модалок и drawer-панелей (наполняется partials/modals.html) -->
   <div id="overlay-root"></div>
 
+  <!--
+    Точка входа SPA. ES-модуль с 'self'-адресом — CSP разрешает его без nonce,
+    поэтому nonce здесь не нужен (в отличие от inline-скрипта выше).
+  -->
   <script type="module" src="js/main.js"></script>
 </body>
 </html>

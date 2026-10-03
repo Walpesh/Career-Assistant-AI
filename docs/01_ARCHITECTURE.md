@@ -192,3 +192,122 @@ curl http://localhost:8000/metrics
 curl http://localhost:8000/metrics/summary
 curl http://localhost:8000/metrics/alerts
 ```
+
+---
+
+## 8. Доставка статики и CSP
+
+Фронтенд обслуживается nginx (`frontend/` + `deploy/nginx.conf`), а при
+отсутствии nginx тем же FastAPI-приложением (`StaticFiles` в `app/main.py`).
+Production-правила едины для обоих путей.
+
+### 8.1. Сборка CSS (без CDN)
+
+Tailwind **не** подключается через Play CDN (`cdn.tailwindcss.com`): он
+исполняет JS на клиенте, что несовместимо со строгой CSP, и добавляет запрос
+к чужому хосту. Вместо этого статика собирается на этапе сборки:
+
+| Источник | Назначение |
+|---|---|
+| `frontend/tailwind.config.js` | Тема (палитра slate + indigo, keyframes, safelist) |
+| `frontend/src/input.css` | Директивы `@tailwind` + компонентные классы `@layer components` |
+| `frontend/src/fonts.css` | `@font-face` для self-hosted Inter |
+| `frontend/src/custom.css` | Кастомные компоненты вне Tailwind (popup, прогресс-бары) |
+
+```bash
+cd frontend
+npm ci
+npm run build      # Tailwind CLI -> css/styles.min.css + манифест SRI
+npm run verify     # проверка в CI: хэши, внешние ресурсы, синтаксис JS
+npm run watch:css  # разработка
+```
+
+Результат: `css/styles.min.css` — единственный файл стилей, ~43 КБ
+в минифицированном виде. Он коммитится в репозиторий, поэтому сборка образа
+Docker не требует Node.js.
+
+### 8.2. Шрифты: self-hosted (152-ФЗ / GDPR)
+
+Inter раньше загружался с `fonts.googleapis.com` / `fonts.gstatic.com`.
+Это передача IP-адреса пользователя стороннему сервису без согласия —
+нарушение 152-ФЗ (ст. 18.1) и GDPR (ст. 6, 44). Теперь woff2 лежат
+в `frontend/fonts/`:
+
+- имена содержат content-hash: `inter-latin.3100e775.woff2`;
+- подключаются через `@font-face` в `src/fonts.css` с `font-display: swap`;
+- `tools/build-assets.mjs` проверяет, что хэш в имени совпадает с содержимым
+  и что на файл ссылается `fonts.css`.
+
+Наличие хэша в имени — условие для `Cache-Control: immutable` (§8.4).
+
+### 8.3. Content Security Policy
+
+Политика уровня «строгий»: `'unsafe-inline'` и `'unsafe-eval'` в `script-src`
+**запрещены**, внешние хосты запрещены.
+
+```
+default-src 'self';
+script-src  'self' 'nonce-<nonce>';   # ES-модули из js/ + инлайн с nonce
+style-src   'self';                   # только собранный styles.min.css
+font-src    'self';                   # self-hosted Inter
+img-src     'self' data:;
+connect-src 'self' ws: wss:;          # REST + WebSocket (docs/03 §8)
+base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none';
+```
+
+Инлайн-скрипт в приложении ровно один — bootstrap в `index.html`, задающий
+`window.APP_CONFIG` до загрузки модулей. Он несёт плейсхолдер
+`nonce="__CSP_NONCE__"`, который подставляет сервер:
+
+| Путь | Источник nonce |
+|---|---|
+| nginx | `$request_id` (32 hex-символа на запрос) + `sub_filter` |
+| FastAPI | `secrets.token_urlsafe(16)` в `SecurityHeadersMiddleware` |
+
+Оба подставляют **одно и то же** значение и в заголовок CSP, и в тело
+ответа, поэтому скрипт исполняется, а подделанный — нет.
+
+> Важно: `sub_filter` и подстановка nonce работают только с несжатым телом.
+> Поэтому `text/html` исключён из `gzip_types` в nginx и из
+> `exclude_content_types` в `GZipMiddleware`.
+
+**Проверка:** `cd backend && python -m tools.csp_check`
+
+### 8.4. SRI и кэширование
+
+SRI-хэши (`integrity="sha384-…"`) проставлены на `styles.min.css` и на
+preload-ссылки шрифтов; проставляет их `tools/build-assets.mjs` при сборке
+(хэш меняется при каждой пересборке CSS, вручную его поддерживать нельзя).
+Манифест — `frontend/assets/manifest.json`.
+
+Правила `Cache-Control` (nginx, `map $uri $cache_control`):
+
+| Ресурс | Значение | Почему |
+|---|---|---|
+| `/`, `/index.html`, `/404.html` | `no-cache` | Точки входа: обязательная перепроверка, иначе после деплоя пользователь долго видит старую сборку |
+| `/fonts/*.<hash>.woff2` | `public, max-age=31536000, immutable` | Content-hash в имени → файл неизменяем |
+| `/js/`, `/partials/`, `/assets/`, `/css/` | `public, max-age=0, must-revalidate` | Имена не хэшированы → максимум 304 |
+| `/api/`, `/health`, `/metrics` | заголовок не выставляется | Кэширование решает backend |
+
+> `add_header` внутри `location` **полностью заменяет** унаследованные от
+> `server` заголовки (вместе с CSP). Поэтому значение Cache-Control
+> вычисляется через `map`, а единственный `add_header Cache-Control`
+> объявлен в `server`.
+
+### 8.5. UX при деградации и ошибках
+
+- **Баннер деградации** (`js/core/degradation.js`): опрашивает
+  `GET /health/ready` раз в минуту и реагирует на `ws:status`. Различает
+  деградацию LLM (парсинг работает, анализ и письма ждут), недоступность
+  очереди (Redis) и БД. Интерфейс не блокируется.
+- **404**: `frontend/404.html` + `error_page 404 /404.html`. Запросы
+  статики с расширением получают честный 404, а не `index.html`.
+- **ARIA**: прогресс-бары — `role="progressbar"` с `aria-valuenow/min/max`
+  и `aria-valuetext` (роль скрывает содержимое от скринридера, поэтому
+  прогресс дублируется текстом); журнал — `role="log"`; баннер —
+  `role="status" aria-live="polite"`.
+- **Mobile Safari**: iOS закрывает WebSocket в фоне, не вызывая `onclose`.
+  Поэтому в `js/core/ws.js` есть watchdog молчания канала
+  (`WS_STALE_TIMEOUT_MS`), немедленный реконнект на `visibilitychange`
+  и `online`, а также сброс backoff при возврате на вкладку.
+

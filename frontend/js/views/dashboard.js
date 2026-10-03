@@ -284,10 +284,14 @@ function renderTasks() {
 
     if (!card || !card.isConnected) {
       card = htmlToElement(taskCardHTML(task));
+      // Ширина прогресс-бара выставляется через CSSOM (updateProgressBar),
+      // а не инлайновым style-атрибутом — его блокирует строгая CSP.
+      updateProgressBar(card.querySelector('[data-progress-track]'), task);
       cardMap.set(task.id, card);
     } else if (card.dataset.status !== (task.status || '')) {
       // Смена статуса — карточка пересобирается (меняются кнопки/бейджи).
       const next = htmlToElement(taskCardHTML(task));
+      updateProgressBar(next.querySelector('[data-progress-track]'), task);
       card.replaceWith(next);
       cardMap.set(task.id, next);
       card = next;

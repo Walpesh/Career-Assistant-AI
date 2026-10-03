@@ -8,6 +8,13 @@
    (повторный connect или реконнект), его onclose/onmessage игнорируются.
    Иначе устаревший сокет планировал бы ещё один реконнект поверх уже
    открытого — это и вызывало циклические «переподключения» страницы.
+
+   Mobile Safari: iOS держит сокет «живым» в API, но при уходе в фон
+   замораживает таймеры и закрывает канал, не вызывая onclose. Поэтому
+   добавлены три страховки (CONFIG.WS_STALE_TIMEOUT_MS):
+     - watchdog по «молчанию» канала (send не бросает, а пинг-понг зависает);
+     - немедленный реконнект на visibilitychange/online;
+     - сброс экспоненциальной задержки при возврате на вкладку.
    ============================================================ */
 
 import { CONFIG, buildWsUrl } from '../config.js';
@@ -37,6 +44,44 @@ export class RealtimeClient {
     // подключении/переподключении, т.к. тикет одноразовый (Redis GETDEL).
     this.getTicket = options.getTicket || (async () => null);
     this.onUnauthorized = options.onUnauthorized || (() => emit('auth:expired'));
+
+    this.lastMessageAt = 0;
+    this.watchdogTimer = null;
+    this.listenersBound = false;
+    this.bindLifecycle();
+  }
+
+  /**
+   * Страховки для mobile Safari (iOS закрывает WS в фоне, не вызывая onclose).
+   * Слушатели вешаются один раз на весь жизненный цикл клиента.
+   */
+  bindLifecycle() {
+    if (this.listenersBound || typeof window === 'undefined') return;
+    this.listenersBound = true;
+
+    // Возврат на вкладку: iOS мог закрыть канал. Сбрасываем backoff и
+    // переподключаемся сразу, не дожидаясь 15-секундной задержки.
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible') return;
+      if (this.manualClose || !this.isAuthenticated) return;
+      if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+        // Канал выглядит живым, но мог «заморозиться» — шлём пинг.
+        this.sendPing();
+        return;
+      }
+      this.attempt = 0;
+      this.open();
+    });
+
+    // Сеть вернулась (вылет из фона, смена Wi-Fi/LTE).
+    window.addEventListener('online', () => {
+      if (this.manualClose || !this.isAuthenticated) return;
+      this.attempt = 0;
+      this.open();
+    });
+
+    // Уход со страницы: закрываем канал явно, чтобы не оставлять «висящий».
+    window.addEventListener('pagehide', () => this.close());
   }
 
   connect() {
@@ -83,7 +128,9 @@ export class RealtimeClient {
     socket.onopen = () => {
       if (socket !== this.socket) return; // соединение уже заменено
       this.attempt = 0;
+      this.lastMessageAt = Date.now();
       this.startHeartbeat();
+      this.startWatchdog();
       this.setStatus('connected');
       emit('log:system', { level: 'info', message: 'WebSocket-соединение установлено' });
       // После переподключения события могли потеряться — нужна пересинхронизация.
@@ -93,6 +140,8 @@ export class RealtimeClient {
 
     socket.onmessage = (event) => {
       if (socket !== this.socket) return;
+      // Любой кадр, включая pong, доказывает, что канал жив.
+      this.lastMessageAt = Date.now();
       this.handleMessage(event.data);
     };
 
@@ -100,6 +149,7 @@ export class RealtimeClient {
       if (socket !== this.socket) return; // устаревший сокет — не наше дело
       this.socket = null;
       this.stopHeartbeat();
+      this.stopWatchdog();
       this.setStatus('disconnected');
 
       if (this.manualClose) return; // штатное закрытие (логаут/выход)
@@ -146,20 +196,59 @@ export class RealtimeClient {
   /** Heartbeat: клиент шлёт ping, сервер отвечает pong (docs/03 §8). */
   startHeartbeat() {
     this.stopHeartbeat();
-    this.heartbeatTimer = setInterval(() => {
-      const socket = this.socket;
-      if (!socket || socket.readyState !== WebSocket.OPEN) return;
-      try {
-        socket.send(JSON.stringify({ event: 'ping' }));
-      } catch {
-        /* ignore — о разрыве сообщит onclose */
-      }
-    }, CONFIG.WS_HEARTBEAT_INTERVAL_MS);
+    this.heartbeatTimer = setInterval(() => this.sendPing(), CONFIG.WS_HEARTBEAT_INTERVAL_MS);
   }
 
   stopHeartbeat() {
     clearInterval(this.heartbeatTimer);
     this.heartbeatTimer = null;
+  }
+
+  /** Отправить ping, если канал открыт. Ошибки проглотит onclose. */
+  sendPing() {
+    const socket = this.socket;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    try {
+      socket.send(JSON.stringify({ event: 'ping' }));
+    } catch {
+      /* ignore — о разрыве сообщит onclose или watchdog */
+    }
+  }
+
+  /**
+   * Watchdog «молчания» канала — страховка для mobile Safari.
+   *
+   * В фоне iOS замораживает таймеры и может закрыть сокет, не вызвав onclose:
+   * readyState остаётся OPEN, send() не бросает, а данных не приходит.
+   * Такой канал выглядит живым, но прогресс задач перестаёт обновляться.
+   *
+   * Если за WS_STALE_TIMEOUT_MS не пришёл ни один кадр (включая pong) —
+   * считаем канал мёртвым и переподключаемся принудительно.
+   */
+  startWatchdog() {
+    this.stopWatchdog();
+    this.watchdogTimer = setInterval(() => {
+      if (this.manualClose || !this.socket) return;
+      // В фоне таймеры всё равно заморожены — проверка бессмысленна.
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      if (Date.now() - this.lastMessageAt < CONFIG.WS_STALE_TIMEOUT_MS) return;
+
+      emit('log:system', {
+        level: 'warning',
+        message: 'WebSocket не отвечает — переподключение принудительно'
+      });
+      // dropSocket снимает обработчики, поэтому onclose не запустит
+      // второй реконнект поверх уже запланированного.
+      this.dropSocket();
+      this.attempt = 0;
+      this.setStatus('disconnected');
+      this.open();
+    }, CONFIG.WS_WATCHDOG_INTERVAL_MS);
+  }
+
+  stopWatchdog() {
+    clearInterval(this.watchdogTimer);
+    this.watchdogTimer = null;
   }
 
   scheduleReconnect() {
@@ -183,6 +272,7 @@ export class RealtimeClient {
     const socket = this.socket;
     this.socket = null;
     this.stopHeartbeat();
+    this.stopWatchdog();
     if (!socket) return;
     socket.onopen = null;
     socket.onmessage = null;
@@ -201,6 +291,7 @@ export class RealtimeClient {
     clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
     this.stopHeartbeat();
+    this.stopWatchdog();
     this.dropSocket();
     this.setStatus('disconnected');
   }

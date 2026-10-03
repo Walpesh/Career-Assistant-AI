@@ -34,16 +34,35 @@ class Settings(BaseSettings):
     trusted_hosts: str = "localhost,127.0.0.1,testserver"
 
     # --- Security headers ---
-    #: Content-Security-Policy. По умолчанию совместим с текущим фронтендом
-    #: (Tailwind Play CDN + Google Fonts). В production политику можно ужесточить.
+    #: Content-Security-Policy.
+    #:
+    #: Политика уровня «строгий»: в script-src НЕТ 'unsafe-inline' и
+    #: 'unsafe-eval', внешние хосты запрещены. Инлайн-скрипты фронтенда
+    #: (единственный bootstrap в index.html) получают nonce — его подставляет
+    #: nginx ($request_id + sub_filter) либо этот middleware для HTML-ответов.
+    #:
+    #: Раньше здесь были 'unsafe-inline' и cdn.tailwindcss.com: Play CDN
+    #: исполнял JS на клиенте, а тег <style type="text/tailwindcss"> и
+    #: Google Fonts требовали внешних хостов в style-src/font-src.
+    #: Теперь Tailwind собирается в статический css/styles.min.css (npm run build),
+    #: а Inter лежит в frontend/fonts/ — из-за 152-ФЗ ст. 18.1 и GDPR ст. 6/44
+    #: передавать IP пользователя на fonts.gstatic.com недопустимо.
+    #:
+    #: Переопределяется переменной CSP_POLICY, если нужны нестандартные директивы.
     csp_policy: str = (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; "
-        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-        "font-src 'self' https://fonts.gstatic.com; "
+        # 'strict-dynamic' не используем: приложение не подгружает скрипты
+        # динамически, а ES-модули грузятся по 'self' без nonce.
+        "script-src 'self' 'nonce-{nonce}'; "
+        "style-src 'self'; "
         "img-src 'self' data:; "
-        "connect-src 'self' ws: wss: http: https:; "
-        "object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+        "font-src 'self'; "
+        "connect-src 'self' ws: wss:; "
+        "object-src 'none'; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'; "
+        "upgrade-insecure-requests"
     )
     gzip_min_size: int = 1024
     #: Доверять ли X-Forwarded-For / X-Forwarded-Proto (за обратным прокси).

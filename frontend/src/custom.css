@@ -1,6 +1,10 @@
 /* ============================================================
-   Career-Assistant-AI — кастомные стили поверх Tailwind (Play CDN).
-   Компонентные классы: см. <style type="text/tailwindcss"> в index.html.
+   Career-Assistant-AI — кастомные стили вне Tailwind.
+   Подключается из src/input.css и попадает в css/styles.min.css.
+
+   Здесь: Fadeout-action-popup, прогресс-бары задач, скроллбары,
+   tag-input, журнал реал-тайм, оверлеи и уважение prefers-reduced-motion.
+   Компонентные классы на @apply — в @layer components файла src/input.css.
    ============================================================ */
 
 :root { color-scheme: dark; }
