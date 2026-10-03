@@ -29,14 +29,22 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.logging import get_logger, new_request_id, set_request_id
+from app.core.sentry import capture_exception
 from app.db.models import Task
 from app.modules.anti_ban import CaptchaDetected, RateLimitExceeded
 from app.modules.anti_ban.exceptions import AntiBanError
+from app.modules.metrics.registry import (
+    observe_llm_execution,
+    observe_task_outcome,
+    set_semaphore_slots,
+)
 from app.modules.parsing.service import ProgressReporter
 from app.modules.queue_manager.queues import (
     LLM_QUEUE,
@@ -65,7 +73,12 @@ __all__ = [
     "install_signal_handlers",
 ]
 
+#: Стандартный logger: сообщения в worker.py используют %-форматирование.
+#: JSON-вывод обеспечивает корневой handler из app.core.logging.
 logger = logging.getLogger(__name__)
+
+#: Структурированный logger для observability-событий (docs/01 §9).
+log = get_logger(__name__)
 
 #: Флаг graceful shutdown: выставляется обработчиком SIGTERM/SIGINT.
 #: Воркер перестаёт брать новые job'ы, активные — завершаются или
@@ -188,6 +201,11 @@ def _slots(ctx: dict):
     return slots
 
 
+def _slot_metric_group(group: str) -> str:
+    """Имя группы семафора для метрики: llm | parsing (без user_id)."""
+    return "llm" if group == LLM_SLOT_GROUP else "parsing"
+
+
 async def _acquire_slot(ctx: dict, group: str, limit: int, task_type: str, task_id: str):
     """Занять слот или вернуть задачу в очередь Redis (docs/04 §5).
 
@@ -197,6 +215,7 @@ async def _acquire_slot(ctx: dict, group: str, limit: int, task_type: str, task_
     slots = _slots(ctx)
     lease = await slots.acquire(group, limit)
     if lease is not None:
+        set_semaphore_slots(_slot_metric_group(group), 1)
         return lease
 
     from arq.worker import Retry
@@ -217,6 +236,7 @@ async def _release_slot(ctx: dict, group: str, lease) -> None:
         return
     index, token = lease
     await _slots(ctx).release(group, index, token)
+    set_semaphore_slots(_slot_metric_group(group), 0)
 
 
 async def _start_task(session: AsyncSession, task: Task) -> bool:
@@ -227,7 +247,7 @@ async def _start_task(session: AsyncSession, task: Task) -> bool:
     if task.status != "pending":
         return False
     task.status = "processing"
-    task.started_at = datetime.now(timezone.utc)
+    task.started_at = datetime.now(UTC)
     await session.commit()
     await publish_event(
         str(task.user_id),
@@ -252,9 +272,10 @@ async def _finish_completed(session: AsyncSession, task: Task, result: dict) -> 
         return False
     task.status = "completed"
     task.result = result
-    task.finished_at = datetime.now(timezone.utc)
+    task.finished_at = datetime.now(UTC)
     task.progress_current = int(result.get("total") or task.progress_current)
     await session.commit()
+    observe_task_outcome(task.task_type, "completed")
     await publish_event(
         str(task.user_id),
         "task.completed",
@@ -276,8 +297,15 @@ async def _finish_failed(
         return
     task.status = "failed"
     task.error_message = error_message
-    task.finished_at = datetime.now(timezone.utc)
+    task.finished_at = datetime.now(UTC)
     await session.commit()
+    observe_task_outcome(task.task_type, "failed", reason="business")
+    log.warning(
+        "task_failed",
+        task_id=str(task.id),
+        task_type=task.task_type,
+        error_message=error_message,
+    )
     await publish_event(
         str(task.user_id),
         "task.failed",
@@ -307,6 +335,13 @@ async def _finish_waiting_captcha(
     task.status = status
     task.error_message = error_message
     await session.commit()
+    observe_task_outcome(task.task_type, "failed", reason="captcha")
+    log.warning(
+        "task_waiting_captcha",
+        task_id=str(task.id),
+        task_type=task.task_type,
+        error_message=error_message,
+    )
     # Событие task.failed с полем status (docs/03 §8): фронтенд сразу показывает
     # статус waiting_captcha вместо «Ошибка».
     await publish_event(
@@ -331,6 +366,8 @@ async def run_parsing_task(ctx: dict, task_id: str) -> dict | None:
     """
     from app.db.models import Task as TaskModel
 
+    set_request_id(new_request_id())
+    started = time.perf_counter()
     factory = _session_factory(ctx)
     async with factory() as session:
         try:
@@ -353,7 +390,14 @@ async def run_parsing_task(ctx: dict, task_id: str) -> dict | None:
         try:
             if not await _start_task(session, task):
                 return None  # отменена или уже обработана
-            return await _execute_parsing(session, task)
+            result = await _execute_parsing(session, task)
+            log.info(
+                "parsing_task_finished",
+                task_id=str(task.id),
+                task_type=task.task_type,
+                duration_ms=round((time.perf_counter() - started) * 1000, 2),
+            )
+            return result
         finally:
             await _release_slot(ctx, group, lease)
 
@@ -388,10 +432,13 @@ async def _execute_parsing(session: AsyncSession, task: Task) -> dict:
         await _finish_failed(session, task, f"Превышен лимит запросов hh.ru: {exc}")
         return {"failed": 1, "error": str(exc)}
     except AntiBanError as exc:
+        observe_task_outcome(task.task_type, "failed", reason="anti_ban")
         await _finish_failed(session, task, f"Ошибка обхода защиты hh.ru: {exc}")
         return {"failed": 1, "error": str(exc)}
     except Exception as exc:  # noqa: BLE001 — задача не должна ронять воркер
         logger.exception("Задача %s завершилась с ошибкой", task.id)
+        capture_exception(exc)
+        observe_task_outcome(task.task_type, "error")
         await _finish_failed(session, task, f"Ошибка парсинга: {exc}")
         return {"failed": 1, "error": str(exc)}
 
@@ -440,7 +487,7 @@ async def _maybe_enqueue_analysis(
         )
         analysis_task.status = "failed"
         analysis_task.error_message = f"Очередь задач недоступна: {exc}"
-        analysis_task.finished_at = datetime.now(timezone.utc)
+        analysis_task.finished_at = datetime.now(UTC)
         await session.commit()
         return
 
@@ -552,6 +599,7 @@ async def run_llm_task(ctx: dict, task_id: str) -> dict | None:
     """
     from app.db.models import Task as TaskModel
 
+    set_request_id(new_request_id())
     factory = _session_factory(ctx)
     async with factory() as session:
         try:
@@ -607,6 +655,7 @@ async def _run_llm_processing(session: AsyncSession, task: Task) -> dict:
         async def report(message: str, i: int = index) -> None:
             await _llm_progress(session, task, i, total, message)
 
+        llm_started = time.perf_counter()
         try:
             outcome = await process_vacancy(
                 session,
@@ -617,10 +666,14 @@ async def _run_llm_processing(session: AsyncSession, task: Task) -> dict:
                 progress=report,
             )
         except LLMError as exc:
+            observe_llm_execution(task.task_type, time.perf_counter() - llm_started)
+            observe_task_outcome(task.task_type, "failed", reason="llm_error")
+            capture_exception(exc)
             errors.append(str(exc))
             await session.commit()
             await _llm_progress(session, task, index, total, "Ошибка обработки")
             continue
+        observe_llm_execution(task.task_type, time.perf_counter() - llm_started)
 
         outcomes.append(outcome.as_dict())
         await session.commit()

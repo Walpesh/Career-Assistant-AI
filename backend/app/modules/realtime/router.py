@@ -30,12 +30,17 @@ from typing import Set
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
 
+from app.core.logging import get_logger
+from app.core.request_id import resolve_ws_request_id
 from app.modules.auth.security import TOKEN_TYPE_ACCESS, TokenError, decode_token
 from app.modules.auth.ws_tickets import consume_ws_ticket
 
 router = APIRouter(tags=["realtime"])
 
 logger = logging.getLogger(__name__)
+
+#: Структурированный logger для событий WebSocket-сессий (docs/01 §9).
+log = get_logger(__name__)
 
 # Track active WebSocket connections per user to prevent duplicates
 # Key: user_id (str), Value: set of WebSocket connections
@@ -93,11 +98,20 @@ async def realtime_channel(
     token: str | None = None,
 ) -> None:
     """Канал реал-тайм событий с аутентификацией по одноразовому тикету."""
+    # request_id на WS-сессию: все логи соединения (docs/01 §9) его несут.
+    request_id = resolve_ws_request_id(websocket.query_params, websocket.headers)
     user_id = await _resolve_user_id(ticket, token)
 
     if not user_id:
         await websocket.close(code=4401)  # 4401: Authentication error
         return
+
+    log.info(
+        "websocket_connected",
+        request_id=request_id,
+        transport="websocket",
+        path=str(websocket.url.path),
+    )
 
     # Регистрируем соединение и запоминаем предыдущие (дубликаты вкладок).
     async with _connection_lock:
@@ -139,6 +153,12 @@ async def realtime_channel(
             user_connections.discard(websocket)
             if not user_connections:
                 _active_connections.pop(user_id, None)
+        log.info(
+            "websocket_disconnected",
+            request_id=request_id,
+            transport="websocket",
+            path=str(websocket.url.path),
+        )
 
 
 def get_active_connection_count() -> int:

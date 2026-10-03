@@ -20,12 +20,15 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
 
 from app.core.config import settings
+from app.core.sentry import capture_exception
+from app.modules.metrics.registry import observe_llm_execution, set_ollama_up
 
 __all__ = [
     "LLMError",
@@ -148,6 +151,17 @@ class AnalysisResult:
             "match_details": self.match_details,
         }
 # --------------------------------------------------------------------- транспорт
+def _set_ollama(up: bool) -> None:
+    """Обновить метрику доступности Ollama и состояние алерта (docs/01 §9)."""
+    try:
+        from app.modules.metrics.alerts import record_ollama_status
+
+        set_ollama_up(up)
+        record_ollama_status(up)
+    except Exception:  # noqa: BLE001 — метрики не должны ломать LLM-вызов
+        pass
+
+
 async def _generate(
     prompt: str,
     *,
@@ -167,6 +181,7 @@ async def _generate(
             "repeat_penalty": 1.1,
         },
     }
+    started = time.perf_counter()
     try:
         async with httpx.AsyncClient(
             base_url=settings.ollama_base_url,
@@ -176,7 +191,13 @@ async def _generate(
             response.raise_for_status()
             data = response.json()
     except (httpx.HTTPError, ValueError) as exc:
+        observe_llm_execution("generate", time.perf_counter() - started)
+        _set_ollama(False)
+        capture_exception(exc)
         raise LLMError(f"Ollama недоступна или вернула невалидный ответ: {exc}") from exc
+
+    observe_llm_execution("generate", time.perf_counter() - started)
+    _set_ollama(True)
 
     text = str(data.get("response") or "").strip()
     if not text:

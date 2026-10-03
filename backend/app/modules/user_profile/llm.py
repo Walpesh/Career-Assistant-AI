@@ -12,9 +12,13 @@
 
 from __future__ import annotations
 
+import time
+
 import httpx
 
 from app.core.config import settings
+from app.core.sentry import capture_exception
+from app.modules.metrics.registry import observe_llm_execution
 
 __all__ = ["LLMError", "compress_resume_text", "trim_to_limit", "COMPRESS_PROMPT_TEMPLATE"]
 
@@ -87,6 +91,7 @@ async def compress_resume_text(
         },
     }
 
+    started = time.perf_counter()
     try:
         async with httpx.AsyncClient(
             base_url=settings.ollama_base_url,
@@ -96,7 +101,11 @@ async def compress_resume_text(
             response.raise_for_status()
             data = response.json()
     except (httpx.HTTPError, ValueError) as exc:
+        observe_llm_execution("compress_resume", time.perf_counter() - started)
+        capture_exception(exc)
         raise LLMError(f"Ollama недоступна или вернула невалидный ответ: {exc}") from exc
+
+    observe_llm_execution("compress_resume", time.perf_counter() - started)
 
     text = str(data.get("response") or "").strip()
     if not text:

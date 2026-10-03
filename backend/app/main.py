@@ -25,11 +25,31 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.api.v1.router import api_router
 from app.core.config import settings
-from app.core.errors import AppError, DEFAULT_ERROR_CODES
+from app.core.errors import DEFAULT_ERROR_CODES, AppError
+from app.core.logging import configure_logging, get_logger
 from app.core.rate_limit import RateLimitMiddleware
+from app.core.request_id import RequestIDMiddleware
 from app.core.security_headers import SecurityHeadersMiddleware
+from app.core.sentry import capture_exception, init_sentry
+from app.modules.metrics import MetricsMiddleware, start_collector, stop_collector
+from app.modules.metrics.router import router as metrics_router
 
-logger = logging.getLogger(__name__)
+#: Structured JSON logger (docs/01 §9): request_id + PII sanitization.
+logger = get_logger(__name__)
+
+#: stdlib logger kept for interop with libraries injecting ``extra``.
+_stdlib_logger = logging.getLogger(__name__)
+
+#: JSON-логирование настраивается один раз при импорте приложения.
+configure_logging(level=settings.log_level, json_output=settings.log_json_output)
+
+#: Sentry включается только при заданном SENTRY_DSN (иначе — no-op, PII-safe).
+SENTRY_ENABLED = init_sentry(
+    dsn=settings.sentry_dsn,
+    environment=settings.environment,
+    release=settings.app_version,
+    traces_sample_rate=settings.sentry_traces_sample_rate,
+)
 
 
 def _frontend_dir() -> Path:
@@ -129,6 +149,10 @@ async def lifespan(app: FastAPI):
     # отдельные рантаймы (worker-parsing ×N, worker-llm ×1) — флаг
     # effective_embedded_workers в production всегда False (defence in depth
     # поверх fail-fast валидатора Settings).
+    if settings.metrics_enabled:
+        # Периодический сбор длин очередей, слотов семафора и доступности Ollama.
+        start_collector()
+
     if redis_available and settings.effective_embedded_workers:
         await start_embedded_workers(AsyncSessionLocal)
     elif redis_available and settings.is_production:
@@ -142,6 +166,7 @@ async def lifespan(app: FastAPI):
     finally:
         await stop_embedded_workers()
         await bridge.stop()
+        await stop_collector()
         await close_pool()
         logger.info("Queue Manager: остановлен")
 
@@ -173,6 +198,9 @@ def create_app() -> FastAPI:
     @app.exception_handler(StarletteHTTPException)
     async def starlette_error_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
         code = getattr(exc, "error_code", None)
+        if exc.status_code >= 500:
+            # 5xx — инцидент: уходит в Sentry (PII вычищается before_send).
+            capture_exception(exc)
         return _error_response(exc.status_code, str(exc.detail), code)
 
     @app.exception_handler(RequestValidationError)
@@ -185,6 +213,13 @@ def create_app() -> FastAPI:
     # Итоговый порядок снаружи внутрь: SecurityHeaders → TrustedHost →
     # HTTPSRedirect(prod) → CORS → RateLimit → GZip → приложение.
     # SecurityHeaders снаружи, чтобы заголовки были и на 429/400-ответах.
+
+    # Метрики HTTP-латентности по endpoint (docs/01 §9).
+    if settings.metrics_enabled:
+        app.add_middleware(MetricsMiddleware)
+
+    # request_id в каждый HTTP-запрос и WS-сессию + заголовок X-Request-ID (docs/01 §9).
+    app.add_middleware(RequestIDMiddleware)
 
     # GZip-сжатие (docs/03 — уменьшение трафика JSON-ответов).
     app.add_middleware(GZipMiddleware, minimum_size=settings.gzip_min_size)
@@ -214,6 +249,9 @@ def create_app() -> FastAPI:
     app.add_middleware(SecurityHeadersMiddleware)
 
     app.include_router(api_router, prefix=settings.api_prefix)
+
+    # Prometheus-метрики: GET /metrics, /metrics/summary, /metrics/alerts.
+    app.include_router(metrics_router)
 
     @app.get("/health", tags=["system"])
     async def health() -> dict[str, str]:

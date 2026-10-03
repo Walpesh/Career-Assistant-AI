@@ -15,6 +15,14 @@ x-common-env: &common-env
   TRUSTED_HOSTS: ${TRUSTED_HOSTS:-api,localhost,frontend}
   QUEUE_EMBEDDED_WORKERS: "false"
   QUEUE_RECOVER_ON_STARTUP: "true"
+  # Observability (docs/01 §9): JSON-логи, Prometheus-метрики, Sentry.
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  LOG_JSON_OUTPUT: "true"
+  METRICS_ENABLED: "true"
+  SENTRY_DSN: ${SENTRY_DSN:-}
+  SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.0}
+  ALERT_LLM_QUEUE_PENDING_THRESHOLD: ${ALERT_LLM_QUEUE_PENDING_THRESHOLD:-10}
+  ALERT_CAPTCHA_RATE_THRESHOLD: ${ALERT_CAPTCHA_RATE_THRESHOLD:-0.05}
 
 services:
   postgres:
@@ -62,6 +70,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    # Prometheus scrape target: GET http://<host>:8000/metrics (docs/01 §9).
     restart: unless-stopped
     depends_on:
       postgres:

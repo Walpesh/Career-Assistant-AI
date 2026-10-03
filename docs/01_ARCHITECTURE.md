@@ -96,3 +96,99 @@ text---
 - LLM Worker — вертикально (один мощный процесс) + возможность позже вынести в отдельный сервис
 - Redis и PostgreSQL — стандартное масштабирование
 - Frontend остаётся лёгким и не требует масштабирования на первом этапе
+---
+
+## 7. Observability (логирование, метрики, ошибки)
+
+Ссылка на реализацию: `backend/app/core/logging.py`, `backend/app/core/request_id.py`,
+`backend/app/core/sentry.py`, `backend/app/modules/metrics/`.
+
+### 7.1. Структурированное JSON-логирование
+
+- **structlog** с JSON-рендерером (`JSONRenderer`) — одна JSON-строка на событие;
+  в development `LOG_JSON_OUTPUT=false` включает читаемый console-вывод.
+- Процессоры: `merge_contextvars` → `add_log_level` → `TimeStamper` →
+  `add_logger_name` → `format_exc_info` → **санитизация PII** → рендерер.
+- Логгеры `uvicorn`/`sqlalchemy.engine` переводятся на тот же JSON-handler,
+  поэтому access-логи и логи БД тоже структурированы.
+
+Поля события: `timestamp`, `level`, `logger`, `event`, `request_id`, `exception`.
+
+### 7.2. request_id
+
+- `RequestIDMiddleware` берёт входящий `X-Request-ID` (или генерирует 16 hex-символов),
+  кладёт его в `contextvars` и возвращает в ответе тем же заголовком.
+- Значение санитизируется: допустимы только `[A-Za-z0-9_-]`, максимум 64 символа —
+  клиент не может «отравить» логи заголовком.
+- WebSocket-сессии получают свой `request_id` (`resolve_ws_request_id`), доступный
+  всем логам Realtime Module.
+
+### 7.3. Правило «никаких PII в логах»
+
+Никогда не логируются и не отправляются в Sentry:
+
+| Категория | Что маскируется |
+|---|---|
+| Заголовки | `Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie`, `X-Api-Key`, `X-Auth-Token`, `X-CSRF-Token` |
+| Секреты | `jwt_secret`, `password`, `access_token`, `refresh_token`, `ws_ticket`, `api_key`, `secret` |
+| ПД кандидата | `email`, `phone`, `telegram`, `full_name`, `first_name`/`last_name`, `resume_text`, `compact_resume`, `cover_letter` |
+| Свободный текст | JWT/Bearer-токены, email-адреса и телефоны по регулярным выражениям |
+
+Маскировка применяется на любом уровне вложенности payload; технические ключи
+(`event`, `status`, `request_id`, `endpoint`, …) не сканируются на PII.
+
+### 7.4. Prometheus-метрики — `GET /metrics`
+
+Text exposition 0.0.4 (`prometheus_client`; при отсутствии пакета включается
+встроенный совместимый реестр). Дополнительно: `GET /metrics/summary` (JSON) и
+`GET /metrics/alerts` (пороги).
+
+| Метрика | Тип | Label | Назначение |
+|---|---|---|---|
+| `http_request_duration_seconds` | Histogram | `endpoint`, `method` | Латентность HTTP по endpoint (шаблон маршрута, не сырой путь) |
+| `http_requests_total` | Counter | `endpoint`, `method`, `status` | Счётчик запросов |
+| `arq_queue_length` | Gauge | `queue` (`parsing`/`llm`) | Длина очередей ARQ |
+| `queue_semaphore_slots_active` | Gauge | `group` | Активные слоты Redis-семафора |
+| `captcha_encounters_total` | Counter | `detector` | Встреченные капчи hh.ru |
+| `fetch_total` | Counter | `result` | Попытки fetch (ok/captcha/error) |
+| `llm_execution_duration_seconds` | Histogram | `task_type` | Длительность LLM-вызовов |
+| `tasks_completed_total` | Counter | `task_type` | Успешно завершённые задачи |
+| `tasks_failed_total` | Counter | `task_type`, `reason` | Отказы задач |
+| `task_errors_total` | Counter | `task_type` | Неожиданные ошибки задач |
+| `ollama_up` | Gauge | — | Доступность Ollama (1/0) |
+| `career_alert_firing` | Gauge | `alert` | Состояние порогов алертов |
+
+Сбор `arq_queue_length`, `queue_semaphore_slots_active` и `ollama_up` выполняет
+фоновая задача `app.modules.metrics.collector` (раз в 15 с) и по запросу
+`/metrics/alerts`.
+
+### 7.5. Пороги алертов
+
+Пороги задаются переменными окружения и применяются в
+`app.modules.metrics.alerts.evaluate_alerts()`; при нарушении пишется
+JSON-событие `alert_firing` и отправляется сообщение в Sentry.
+
+| Алерт | Порог (env) | По умолчанию | Условие |
+|---|---|---|---|
+| `llm_queue_pending` | `ALERT_LLM_QUEUE_PENDING_THRESHOLD` | 10 | pending-задач в `career:queue:llm` > порога |
+| `captcha_rate` | `ALERT_CAPTCHA_RATE_THRESHOLD` | 0.05 (5%) | капчи / fetch > порога |
+| `ollama_down` | `ALERT_OLLAMA_DOWN_SECONDS` | 60 с | Ollama недоступна дольше порога |
+| `task_failure_rate` | `ALERT_TASK_FAILURE_RATE_THRESHOLD` | 0.25 | отказы / завершённые задачи > порога |
+
+### 7.6. Sentry
+
+- Включается только при непустом `SENTRY_DSN`; иначе все точки вызова — no-op.
+- `send_default_pii=False` и `request_bodies="never"` — PII не покидает процесс.
+- `before_send=scrub_event` дополнительно вычищает `Authorization`/`Cookie`,
+  тело и query-строку запроса, `extra`, `contexts`, `tags`, `exception`,
+  breadcrumbs, а из `user` оставляет только технический `id`.
+- Ошибки 5xx из HTTP-обработчиков и исключения ARQ-задач отправляются
+  автоматически; тег `request_id` связывает событие с логами запроса.
+
+### 7.7. Проверка
+
+```bash
+curl http://localhost:8000/metrics
+curl http://localhost:8000/metrics/summary
+curl http://localhost:8000/metrics/alerts
+```

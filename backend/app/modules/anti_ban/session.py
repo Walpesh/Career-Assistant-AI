@@ -45,10 +45,14 @@ from app.modules.anti_ban.exceptions import (
     ProxyError,
     RateLimitExceeded,
 )
+from app.core.logging import get_logger
 from app.modules.anti_ban.fingerprint import Fingerprint, generate_fingerprint
 from app.modules.anti_ban.proxy import ProxyEndpoint, ProxyRotator
+from app.modules.metrics.registry import inc_captcha, inc_fetch_total
 
 __all__ = ["FetchResponse", "PreparedRequest", "AntiBanSession", "warmup_steps"]
+
+log = get_logger(__name__)
 
 
 def warmup_steps() -> list[str]:
@@ -183,8 +187,17 @@ class AntiBanSession:
             consecutive_404=self.consecutive_404,
         )
         self.response_count += 1
+        inc_fetch_total(detection.kind.value)
         if detection.kind is ThreatKind.CAPTCHA:
             self.captcha_count += 1
+            inc_captcha(detection.detail or "captcha")
+            log.warning(
+                "captcha_detected",
+                url=url,
+                detail=detection.detail,
+                captcha_count=self.captcha_count,
+                response_count=self.response_count,
+            )
         if detection.kind in (ThreatKind.NOT_FOUND, ThreatKind.THROTTLING):
             self.consecutive_404 += 1  # серия404 растёт (§5)
         elif detection.kind is ThreatKind.OK:

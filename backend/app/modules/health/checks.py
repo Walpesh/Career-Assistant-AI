@@ -13,6 +13,18 @@ from app.core.config import settings
 __all__ = ["check_readiness", "check_postgres", "check_redis", "check_ollama"]
 
 
+def _record_ollama(up: bool) -> None:
+    """Обновить метрику доступности Ollama и состояние алерта (docs/01 §9)."""
+    try:
+        from app.modules.metrics.alerts import record_ollama_status
+        from app.modules.metrics.registry import set_ollama_up
+
+        set_ollama_up(up)
+        record_ollama_status(up)
+    except Exception:  # noqa: BLE001 — метрики не должны ломать readiness
+        pass
+
+
 async def check_postgres() -> dict[str, Any]:
     """Postgres: SELECT 1 через текущий engine."""
     try:
@@ -49,9 +61,12 @@ async def check_ollama() -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.get(f"{base}/api/tags")
         if response.status_code < 500:
+            _record_ollama(True)
             return {"status": "up", "http_status": response.status_code}
+        _record_ollama(False)
         return {"status": "down", "error": f"ollama http {response.status_code}"}
     except Exception as exc:  # noqa: BLE001 — readiness не должен падать
+        _record_ollama(False)
         return {"status": "down", "error": str(exc)[:300]}
 
 

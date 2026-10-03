@@ -25,6 +25,9 @@ dependencies = [
   "playwright-stealth==2.0.3",
   "patchright==1.63.0",
   "nodriver==0.50.3",
+  "structlog==26.1.0",
+  "prometheus-client==0.26.0",
+  "sentry-sdk==2.71.0",
 ]
 
 [project.optional-dependencies]

@@ -129,6 +129,33 @@ class Settings(BaseSettings):
     proxy_password: str = ""
     proxy_list: str = ""  # явные URL через запятую: http://user:pass@host:port
 
+    # --- Observability: логирование (docs/01_ARCHITECTURE.md §9) ---
+    # Уровень логгирования корневого логгера и structlog.
+    log_level: str = "INFO"
+    # JSON-вывод логов (production). В development можно выключить для
+    # читаемого console-рендера: LOG_JSON_OUTPUT=false
+    log_json_output: bool = True
+
+    # --- Observability: Sentry (docs/01_ARCHITECTURE.md §9) ---
+    # Пустой DSN → Sentry выключен (no-op). PII-скраббинг включён всегда:
+    # пароли, JWT-токены, raw cookies и ПД кандидата не отправляются.
+    sentry_dsn: str = ""
+    sentry_traces_sample_rate: float = 0.0
+    sentry_send_default_pii: bool = False
+
+    # --- Observability: Prometheus (GET /metrics) ---
+    metrics_enabled: bool = True
+
+    # --- Observability: пороги алертов ---
+    # Рост LLM-очереди: больше N ожидающих задач → алерт.
+    alert_llm_queue_pending_threshold: int = 10
+    # Доля ответов с капчей: выше N процентов → алерт.
+    alert_captcha_rate_threshold: float = 0.05
+    # Доля неуспешных задач: выше N процентов → алерт.
+    alert_task_failure_rate_threshold: float = 0.25
+    # Сколько секунд недоступности Ollama считать инцидентом.
+    alert_ollama_down_seconds: int = 60
+
     @property
     def cors_origin_list(self) -> list[str]:
         """CORS-источники из строки через запятую."""
