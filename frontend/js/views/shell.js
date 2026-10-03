@@ -4,6 +4,7 @@
    ============================================================ */
 
 import { on } from '../core/bus.js';
+import { api } from '../core/api.js';
 import { session } from '../core/session.js';
 import { getState, setState, subscribe } from '../core/state.js';
 import { popup } from '../components/fadeout-action-popup.js';
@@ -50,6 +51,12 @@ export function initShell() {
       danger: true
     });
     if (!confirmed) return;
+    // Отзываем refresh-токен на сервере (cookie очищается), затем чистим клиент.
+    try {
+      await api.logout();
+    } catch {
+      /* logout не критичен для выхода — cookie всё равно истечёт */
+    }
     session.clear();
     window.location.reload();
   });

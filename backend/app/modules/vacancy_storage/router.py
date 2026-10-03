@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import AppError
 from app.db.models import User
 from app.db.session import get_db
+from app.modules.anti_ban import CaptchaDetected, RateLimitExceeded
 from app.modules.auth.deps import get_current_user
 from app.modules.vacancy_storage.parser import (
     RawParseError,
@@ -117,6 +118,20 @@ async def manual_ingestion(
     except VacancyNotFound:
         # docs/04 §5: «Вакансия реально удалена → error с причиной not_found».
         fields, ingest_status = {}, "error"
+    except CaptchaDetected as exc:
+        # docs/04 §2 п.3, §5: капчу нельзя обходить автоматически — просим
+        # повторить запрос после ручного прохождения.
+        raise AppError(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            f"Обнаружена капча hh.ru — повторите запрос позже: {exc}",
+            "CAPTCHA_DETECTED",
+        ) from exc
+    except RateLimitExceeded as exc:
+        raise AppError(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            f"Превышен лимит запросов hh.ru — повторите запрос позже: {exc}",
+            "HH_RATE_LIMITED",
+        ) from exc
     except RawParseError as exc:
         raise AppError(
             status.HTTP_500_INTERNAL_SERVER_ERROR,

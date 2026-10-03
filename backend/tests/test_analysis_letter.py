@@ -70,7 +70,13 @@ def fake_llm(monkeypatch):
 def setup_user(engine):
     """Пользователь с compact_resume + вакансия для обработки."""
 
-    async def _make(*, match_threshold: int = 70, compact: str = COMPACT):
+    async def _make(
+        *,
+        match_threshold: int = 70,
+        compact: str = COMPACT,
+        analysis_preferences: str | None = None,
+        resume_addition: str | None = None,
+    ):
         factory = async_sessionmaker(
             bind=engine, class_=AsyncSession, expire_on_commit=False, autoflush=False
         )
@@ -84,6 +90,8 @@ def setup_user(engine):
                     full_name="Тест Кандидат",
                     compact_resume=compact,
                     match_threshold=match_threshold,
+                    analysis_preferences=analysis_preferences,
+                    resume_addition=resume_addition,
                 )
             )
             vacancy = Vacancy(
@@ -241,7 +249,10 @@ async def test_mode_letter_writes_letter_without_analysis(fake_llm, setup_user, 
     # Пост-обработка (docs/05 §7) убирает markdown-обёртки и лишние пробелы.
     assert letter.content == letter_text
     assert "```" not in letter.content
-    assert vacancy.status == "letter_ready"
+    # docs/02 §5: letter_ready = «Есть анализ + письмо». В analyses записи нет,
+    # поэтому статус остаётся исходным (raw) — граф статусов не нарушается.
+    assert vacancy.status == "raw"
+    assert outcome.status == "raw"
 
 
 async def test_mode_auto_generates_letter_above_threshold(fake_llm, setup_user, engine):
@@ -505,3 +516,242 @@ async def test_worker_marks_llm_task_failed_on_llm_error(monkeypatch, setup_user
 
     assert done.status == "failed"
     assert done.error_message
+# --- docs/05 §4: предпочтения в анализах --------------------------------------
+
+
+def test_build_preferences_block_wraps_text():
+    """docs/05 §4: пожелания попадают в промпт отдельным блоком."""
+    from app.modules.analysis_letter.llm import build_preferences_block
+
+    block = build_preferences_block("не хочу трудоустройство по ТК РФ")
+    assert "не хочу трудоустройство по ТК РФ" in block
+    assert "weaknesses" in block
+    # Пустое поле → блока нет, промпт не меняется.
+    assert build_preferences_block(None) == ""
+    assert build_preferences_block("   ") == ""
+
+
+def test_build_preferences_block_respects_limit():
+    """docs/05 §4: слишком длинные пожелания обрезаются (экономия контекста)."""
+    from app.modules.analysis_letter.llm import (
+        MAX_PREFERENCES_CHARS,
+        build_preferences_block,
+    )
+
+    block = build_preferences_block("я" * (MAX_PREFERENCES_CHARS + 500))
+    assert "я" * (MAX_PREFERENCES_CHARS + 1) not in block
+
+
+async def test_analysis_prompt_contains_preferences(fake_llm, setup_user, engine):
+    """docs/05 §4: поле «Предпочтения в анализах» напрямую влияет на промпт."""
+    user_id, vacancy_id = await setup_user(
+        analysis_preferences="не хочу трудоустройство по ТК РФ"
+    )
+    factory = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+
+    async with factory() as session:
+        await process_vacancy(
+            session, user_id=user_id, vacancy_id=vacancy_id, mode="analyze"
+        )
+
+    analyze_prompts = [
+        call["prompt"] for call in fake_llm["calls"] if "match_score" in call["prompt"]
+    ]
+    assert analyze_prompts, "промпт анализа не был вызван"
+    assert "не хочу трудоустройство по ТК РФ" in analyze_prompts[0]
+    assert "Предпочтения кандидата" in analyze_prompts[0]
+
+
+async def test_analysis_prompt_omits_empty_preferences(fake_llm, setup_user, engine):
+    """docs/05 §4: пустые пожелания не добавляют блок в промпт."""
+    user_id, vacancy_id = await setup_user(analysis_preferences=None)
+    factory = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+
+    async with factory() as session:
+        await process_vacancy(
+            session, user_id=user_id, vacancy_id=vacancy_id, mode="analyze"
+        )
+
+    analyze_prompts = [
+        call["prompt"] for call in fake_llm["calls"] if "match_score" in call["prompt"]
+    ]
+    assert analyze_prompts
+    assert "Предпочтения кандидата" not in analyze_prompts[0]
+
+
+# --- docs/05 §5: «Хотите добавить информацию в конец резюме?» -----------------
+
+
+def test_append_resume_addition_adds_from_new_line():
+    """docs/05 §5: скриптовый метод дописывает текст «с красной строки»."""
+    from app.modules.analysis_letter.llm import append_resume_addition
+
+    assert append_resume_addition("Письмо", "Хвост") == "Письмо\n\nХвост"
+    assert append_resume_addition("Письмо\n", "Хвост") == "Письмо\n\nХвост"
+
+
+def test_append_resume_addition_is_noop_for_empty_field():
+    """docs/05 §5: пустое поле → письмо не меняется."""
+    from app.modules.analysis_letter.llm import append_resume_addition
+
+    letter = "Письмо"
+    assert append_resume_addition(letter, None) == letter
+    assert append_resume_addition(letter, "   ") == letter
+
+
+def test_append_resume_addition_avoids_duplication():
+    """docs/05 §9: повторная генерация письма не дублирует хвост."""
+    from app.modules.analysis_letter.llm import append_resume_addition
+
+    once = append_resume_addition("Письмо", "Хвост")
+    assert append_resume_addition(once, "Хвост") == once
+
+
+async def test_letter_gets_resume_addition_from_profile(fake_llm, setup_user, engine):
+    """docs/05 §5: в конце обработки вакансии текст дописывается в письмо."""
+    user_id, vacancy_id = await setup_user(
+        resume_addition="Готов приехать на собеседование в удобное время."
+    )
+    letter_text = ("Здравствуйте! Готов обсудить детали. " * 10).strip()
+    fake_llm["default"] = letter_text
+    factory = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+
+    async with factory() as session:
+        outcome = await process_vacancy(
+            session, user_id=user_id, vacancy_id=vacancy_id, mode="letter"
+        )
+
+    assert outcome.letter_generated is True
+
+    async with factory() as session:
+        letter = await session.scalar(
+            select(CoverLetter).where(CoverLetter.vacancy_id == vacancy_id)
+        )
+
+    assert letter is not None
+    # Текст из профиля дописан с новой строки, а тело письма не тронуто.
+    assert letter.content == (
+        f"{letter_text}\n\nГотов приехать на собеседование в удобное время."
+    )
+
+
+async def test_letter_unchanged_when_resume_addition_empty(fake_llm, setup_user, engine):
+    """docs/05 §5: без заполненного поля письмо остаётся исходным."""
+    user_id, vacancy_id = await setup_user(resume_addition=None)
+    letter_text = ("Здравствуйте! Готов обсудить детали. " * 10).strip()
+    fake_llm["default"] = letter_text
+    factory = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+
+    async with factory() as session:
+        await process_vacancy(
+            session, user_id=user_id, vacancy_id=vacancy_id, mode="letter"
+        )
+
+    async with factory() as session:
+        letter = await session.scalar(
+            select(CoverLetter).where(CoverLetter.vacancy_id == vacancy_id)
+        )
+
+    assert letter is not None
+    assert letter.content == letter_text
+
+
+# --- IDOR: /analysis/{id} и /letters/{id} проверяют владельца (security) ---
+
+API = "/api/v1"
+
+
+async def _register_and_login(client, email: str) -> tuple[str, dict]:
+    """Регистрация + вход через API → (user_id, auth-заголовки)."""
+    response = await client.post(
+        f"{API}/auth/register", json={"email": email, "password": "strongpassword"}
+    )
+    assert response.status_code == 201, response.text
+    user_id = response.json()["id"]
+
+    response = await client.post(
+        f"{API}/auth/login", json={"email": email, "password": "strongpassword"}
+    )
+    assert response.status_code == 200, response.text
+    headers = {"Authorization": f"Bearer {response.json()['access_token']}"}
+    return user_id, headers
+
+
+async def _seed_vacancy_with_results(engine, user_id, *, status: str = "letter_ready"):
+    """Создать вакансию пользователя с готовым анализом и письмом."""
+    factory = async_sessionmaker(
+        bind=engine, class_=AsyncSession, expire_on_commit=False, autoflush=False
+    )
+    async with factory() as session:
+        vacancy = Vacancy(
+            user_id=uuid.UUID(str(user_id)),
+            hh_vacancy_id=uuid.uuid4().hex[:8],
+            url="https://hh.ru/vacancy/1",
+            status=status,
+            source="manual",
+            title="Python Dev",
+        )
+        session.add(vacancy)
+        await session.flush()
+        session.add(
+            Analysis(
+                vacancy_id=vacancy.id,
+                match_score=90,
+                summary="Хорошее соответствие",
+                strengths="FastAPI",
+                weaknesses="Нет Kubernetes",
+            )
+        )
+        session.add(
+            CoverLetter(
+                vacancy_id=vacancy.id,
+                content="Здравствуйте! Меня заинтересовала ваша вакансия — готов обсудить детали.",
+            )
+        )
+        await session.commit()
+        return str(vacancy.id)
+
+
+async def test_analysis_and_letter_are_owner_only(client, engine):
+    """IDOR: чужой vacancy_id на /analysis и /letters → 404 (не 200)."""
+    owner_id, owner_headers = await _register_and_login(client, "owner@test.dev")
+    vacancy_id = await _seed_vacancy_with_results(engine, owner_id)
+
+    # Владелец получает свои данные.
+    own_analysis = await client.get(f"{API}/analysis/{vacancy_id}", headers=owner_headers)
+    assert own_analysis.status_code == 200, own_analysis.text
+    assert own_analysis.json()["match_score"] == 90
+
+    own_letter = await client.get(f"{API}/letters/{vacancy_id}", headers=owner_headers)
+    assert own_letter.status_code == 200, own_letter.text
+
+    # Другой пользователь не должен видеть чужой анализ/письмо — строго 404.
+    _, attacker_headers = await _register_and_login(client, "attacker@test.dev")
+
+    stolen_analysis = await client.get(f"{API}/analysis/{vacancy_id}", headers=attacker_headers)
+    assert stolen_analysis.status_code == 404
+    assert stolen_analysis.json()["error_code"] == "NOT_FOUND"
+
+    stolen_letter = await client.get(f"{API}/letters/{vacancy_id}", headers=attacker_headers)
+    assert stolen_letter.status_code == 404
+    assert stolen_letter.json()["error_code"] == "NOT_FOUND"
+
+
+async def test_analysis_unknown_vacancy_returns_404(client):
+    """Неизвестный vacancy_id → 404 (без утечки существования)."""
+    _, headers = await _register_and_login(client, "nobody@test.dev")
+    response = await client.get(f"{API}/analysis/{uuid.uuid4()}", headers=headers)
+    assert response.status_code == 404
+
+    response = await client.get(f"{API}/letters/{uuid.uuid4()}", headers=headers)
+    assert response.status_code == 404
+
+
+async def test_run_analysis_rejects_more_than_100_vacancies(client):
+    """/analysis/run: массив vacancy_ids строго ≤ 100 (защита от abuse)."""
+    _, headers = await _register_and_login(client, "bulk@test.dev")
+    payload = {"vacancy_ids": [str(uuid.uuid4()) for _ in range(101)], "mode": "analyze"}
+
+    response = await client.post(f"{API}/analysis/run", json=payload, headers=headers)
+    assert response.status_code == 400
+    assert response.json()["error_code"] == "VALIDATION_ERROR"

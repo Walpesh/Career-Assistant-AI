@@ -33,7 +33,8 @@ for stream in (sys.stdout, sys.stderr):
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.modules.parsing.schemas import ParseAutoRequest  # noqa: E402
+from app.modules.parsing.schemas import ParseAutoRequest, ParseGroupRequest  # noqa: E402
+from app.modules.parsing.service import is_blacklisted, normalize_blacklist  # noqa: E402
 from app.modules.parsing.urls import (  # noqa: E402
     build_auto_search_url,
     build_page_url,
@@ -164,6 +165,67 @@ def check_request_schema() -> None:
 
 
 # --------------------------------------------------------------------------
+# 3.1. Чёрный список слов (docs/04 §4.9)
+# --------------------------------------------------------------------------
+def check_blacklist() -> None:
+    section("3.1. Чёрный список слов (docs/04 §4.9)")
+
+    payload = {
+        "keywords": ["python"],
+        "blacklist_enabled": True,
+        "blacklist_words": ["ТК РФ", " ГПХ ", "тк рф"],
+    }
+    try:
+        request = ParseAutoRequest.model_validate(payload)
+        check("Чёрный список принимается схемой /parsing/auto", True)
+        normalized = normalize_blacklist(request.blacklist_words)
+        check(
+            "Слова нормализуются (пробелы + дубли без учёта регистра)",
+            normalized == ["ТК РФ", "ГПХ"],
+            str(normalized),
+        )
+    except Exception as exc:  # noqa: BLE001
+        check("Чёрный список принимается схемой /parsing/auto", False, str(exc))
+
+    try:
+        ParseGroupRequest.model_validate(
+            {
+                "search_url": "https://hh.ru/search/vacancy?text=python",
+                "blacklist_enabled": True,
+                "blacklist_words": ["ТК РФ"],
+            }
+        )
+        check("Чёрный список принимается схемой /parsing/group", True)
+    except Exception as exc:  # noqa: BLE001
+        check("Чёрный список принимается схемой /parsing/group", False, str(exc))
+
+    # По умолчанию тумблер выключен — фильтр не применяется.
+    default_request = ParseAutoRequest.model_validate({"keywords": ["python"]})
+    check(
+        "По умолчанию тумблер выключен",
+        default_request.blacklist_enabled is False and default_request.blacklist_words == [],
+    )
+
+    fields = {"title": "Python-разработчик", "description_raw": "Оформление строго по ТК РФ."}
+    check(
+        "Чёрное слово в описании найдено",
+        is_blacklisted(fields, ["ТК РФ"]) == ["ТК РФ"],
+    )
+    check(
+        "Регистронезависимая проверка",
+        is_blacklisted(fields, ["тк рф"]) == ["тк рф"],
+    )
+    check(
+        "Нет совпадений — вакансия проходит",
+        is_blacklisted(fields, ["ГПХ", "1С"]) == [],
+    )
+    check(
+        "Выключенный тумблер ничего не отсекает",
+        is_blacklisted(fields, []) == [],
+    )
+
+
+# --------------------------------------------------------------------------
 # 4. Ссылка группового парсера
 # --------------------------------------------------------------------------
 def check_group_url() -> None:
@@ -237,6 +299,7 @@ def main() -> int:
     check_each_criterion()
     check_combined_filters()
     check_request_schema()
+    check_blacklist()
     check_group_url()
 
     if "--live" in sys.argv:

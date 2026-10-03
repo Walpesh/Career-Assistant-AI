@@ -31,8 +31,8 @@ import * as analysisView from './views/analysis.js';
 async function handleWsUnauthorized() {
   try {
     const data = await api.refresh();
-    if (data?.access_token && session.accessToken) {
-      realtime.connect(session.accessToken);
+    if (data?.access_token) {
+      realtime.connect();
       return;
     }
   } catch (error) {
@@ -44,7 +44,14 @@ async function handleWsUnauthorized() {
 
 const realtime = CONFIG.DEMO
   ? new DemoSocket()
-  : new RealtimeClient({ onUnauthorized: handleWsUnauthorized });
+  : new RealtimeClient({
+      onUnauthorized: handleWsUnauthorized,
+      // Одноразовый тикет запрашивается под каждый connect/реконнект (docs/03 §8).
+      getTicket: async () => {
+        const data = await api.wsTicket();
+        return data?.ticket || null;
+      }
+    });
 
 async function boot() {
   bindOverlays();
@@ -86,8 +93,13 @@ async function boot() {
 
   authView.initAuth(() => enterApp());
 
-  if (session.isAuthed()) {
+  if (session.isAuthed() || session.hasSessionHint()) {
     try {
+      // После перезагрузки access-токен в памяти пуст — восстанавливаем сессию
+      // через refresh-cookie (HttpOnly), затем читаем профиль.
+      if (!session.isAuthed() && session.hasSessionHint()) {
+        await api.refresh();
+      }
       const user = await api.me();
       if (user && typeof user === 'object') session.setUser(user);
       await enterApp();
@@ -110,7 +122,7 @@ async function enterApp() {
   const emailEl = document.getElementById('user-email');
   if (emailEl) emailEl.textContent = user?.email || '—';
 
-  realtime.connect(session.accessToken);
+  realtime.connect();
   await initTaskTracking();
 
   // Профиль нужен для порога матчинга и настроек — загружаем в фоне.

@@ -60,13 +60,28 @@ export const CONFIG = {
    */
   COMPACT_MAX_CHARS: 2000,
   /** Лимит полного resume_text в символах (docs/02 §3.2). */
-  RESUME_MAX_CHARS: 5000
+  RESUME_MAX_CHARS: 5000,
+  /**
+   * Лимит поля «Хотите добавить информацию в конец резюме?» — должен совпадать
+   * с backend RESUME_ADDITION_MAX_CHARS (дописывается в конец письма).
+   */
+  RESUME_ADDITION_MAX_CHARS: 2000,
+  /**
+   * Лимит поля «Предпочтения в анализах» — должен совпадать с backend
+   * ANALYSIS_PREFERENCES_MAX_CHARS (передаётся в промпт анализа).
+   */
+  ANALYSIS_PREFERENCES_MAX_CHARS: 2000,
+  /**
+   * Лимит чёрного списка слов в парсинге — должен совпадать с backend
+   * MAX_BLACKLIST_WORDS (docs/04 §4.9).
+   */
+  MAX_BLACKLIST_WORDS: 50
 };
 
-/** URL WebSocket: ws(s)://host/<api-base>/ws?token=... (docs/03_API_CONTRACTS.md §8). */
-export function buildWsUrl(token) {
+/** URL WebSocket: ws(s)://host/<api-base>/ws?ticket=... (docs/03_API_CONTRACTS.md §8). */
+export function buildWsUrl(ticket) {
   const base = new URL(CONFIG.API_BASE, window.location.origin);
   const protocol = base.protocol === 'https:' ? 'wss:' : 'ws:';
   const path = trimTrailingSlash(base.pathname);
-  return `${protocol}//${base.host}${path}/ws?token=${encodeURIComponent(token)}`;
+  return `${protocol}//${base.host}${path}/ws?ticket=${encodeURIComponent(ticket)}`;
 }

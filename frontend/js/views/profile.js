@@ -37,6 +37,10 @@ export async function mount() {
     email: document.getElementById('profile-email'),
     resume: document.getElementById('profile-resume'),
     resumeCounter: document.getElementById('resume-counter'),
+    resumeAddition: document.getElementById('profile-resume-addition'),
+    resumeAdditionCounter: document.getElementById('resume-addition-counter'),
+    analysisPreferences: document.getElementById('profile-analysis-preferences'),
+    analysisPreferencesCounter: document.getElementById('analysis-prefs-counter'),
     skills: document.getElementById('profile-skills'),
     experience: document.getElementById('profile-experience'),
     salaryFrom: document.getElementById('profile-salary-from'),
@@ -57,6 +61,14 @@ export async function mount() {
 
   els.resume.addEventListener('input', () => {
     updateResumeCounter();
+    markDirty();
+  });
+  els.resumeAddition.addEventListener('input', () => {
+    updateResumeAdditionCounter();
+    markDirty();
+  });
+  els.analysisPreferences.addEventListener('input', () => {
+    updateAnalysisPreferencesCounter();
     markDirty();
   });
   els.fullName.addEventListener('input', markDirty);
@@ -122,6 +134,10 @@ function fillForm(profile = {}) {
   els.email.value = user.email || '—';
   els.resume.value = profile.resume_text || '';
   updateResumeCounter();
+  els.resumeAddition.value = profile.resume_addition || '';
+  updateResumeAdditionCounter();
+  els.analysisPreferences.value = profile.analysis_preferences || '';
+  updateAnalysisPreferencesCounter();
   skillsInput.setValues(profile.skills || []);
   els.experience.value = profile.experience_years ?? '';
   els.salaryFrom.value = profile.desired_salary_from ?? '';
@@ -154,7 +170,11 @@ function readForm() {
     desired_salary_from: els.salaryFrom.value === '' ? null : Number(els.salaryFrom.value),
     desired_salary_to: els.salaryTo.value === '' ? null : Number(els.salaryTo.value),
     match_threshold: clamp(Number(els.threshold.value), 0, 100),
-    preferred_work_formats: [...els.workFormats].filter((input) => input.checked).map((input) => input.value)
+    preferred_work_formats: [...els.workFormats].filter((input) => input.checked).map((input) => input.value),
+    // Дописывается в конец письма «с красной строки» (backend: llm.append_resume_addition).
+    resume_addition: els.resumeAddition.value.trim() || null,
+    // Передаётся в промпт анализа нейросети (backend: llm.build_preferences_block).
+    analysis_preferences: els.analysisPreferences.value.trim() || null
   };
 }
 
@@ -192,6 +212,10 @@ function resetForm() {
   els.fullName.value = snapshot.full_name || '';
   els.resume.value = snapshot.resume_text || '';
   updateResumeCounter();
+  els.resumeAddition.value = snapshot.resume_addition || '';
+  updateResumeAdditionCounter();
+  els.analysisPreferences.value = snapshot.analysis_preferences || '';
+  updateAnalysisPreferencesCounter();
   skillsInput.setValues(snapshot.skills || []);
   els.experience.value = snapshot.experience_years ?? '';
   els.salaryFrom.value = snapshot.desired_salary_from ?? '';
@@ -209,6 +233,18 @@ function markDirty() {
 
 function updateResumeCounter() {
   els.resumeCounter.textContent = `${charCount(els.resume.value)} / ${CONFIG.RESUME_MAX_CHARS}`;
+}
+
+/* ---------- «Хотите добавить информацию в конец резюме?» и предпочтения ---------- */
+
+function updateResumeAdditionCounter() {
+  els.resumeAdditionCounter.textContent =
+    `${charCount(els.resumeAddition.value)} / ${CONFIG.RESUME_ADDITION_MAX_CHARS}`;
+}
+
+function updateAnalysisPreferencesCounter() {
+  els.analysisPreferencesCounter.textContent =
+    `${charCount(els.analysisPreferences.value)} / ${CONFIG.ANALYSIS_PREFERENCES_MAX_CHARS}`;
 }
 
 /* ---------- compact_resume ---------- */

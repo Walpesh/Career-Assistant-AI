@@ -17,6 +17,10 @@ __all__ = ["ProfileOut", "ProfileUpdate"]
 # docs/02 §3.2: resume_text — «до 5000 символов».
 RESUME_MAX_CHARS = 5000
 
+# docs/02 §3.2: analysis_preferences и resume_addition — свободный текст.
+ANALYSIS_PREFERENCES_MAX_CHARS = 2000
+RESUME_ADDITION_MAX_CHARS = 2000
+
 
 class ProfileOut(BaseModel):
     """Ответ GET/PUT /profile — строка user_profiles (docs/02 §3.2)."""
@@ -33,6 +37,8 @@ class ProfileOut(BaseModel):
     desired_salary_to: int | None = None
     match_threshold: int
     preferred_work_formats: list[str] | None = None
+    analysis_preferences: str | None = None
+    resume_addition: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -56,10 +62,29 @@ class ProfileUpdate(BaseModel):
     desired_salary_to: int | None = Field(default=None, ge=0)
     match_threshold: int | None = Field(default=None, ge=0, le=100)
     preferred_work_formats: list[str] | None = Field(default=None, max_length=10)
+    analysis_preferences: str | None = Field(
+        default=None,
+        max_length=ANALYSIS_PREFERENCES_MAX_CHARS,
+        description="Пожелания на человеческом языке: что не хочу видеть в вакансии",
+    )
+    resume_addition: str | None = Field(
+        default=None,
+        max_length=RESUME_ADDITION_MAX_CHARS,
+        description="Текст, дописываемый в конец сопроводительного письма",
+    )
 
     @field_validator("full_name", "resume_text")
     @classmethod
     def _strip_or_none(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped or None
+
+    @field_validator("analysis_preferences", "resume_addition")
+    @classmethod
+    def _strip_text_or_none(cls, value: str | None) -> str | None:
+        """Свободный текст профиля: обрезаем края, пустая строка = очистить поле."""
         if value is None:
             return None
         stripped = value.strip()

@@ -4,47 +4,57 @@
 минимум данных (docs/04 §7): заголовок, компания, зарплата, опыт, формат работы,
 график, занятость, город, очищенное описание; сырой HTML сохраняется для отладки.
 
-Это быстрый путь (curl_cffi-интеграция и Playwright-fallback появятся в Parsing
-Orchestrator / Proxy & Anti-Ban — docs/04 §2). Сейчас — httpx с браузерными
-заголовками; разбор вёрстки терпим к отсутствию отдельных полей.
+Сетевая часть выполняется через Proxy & Anti-Ban Module (``AntiBanSession``:
+прогрев, human-паузы 4–8 с, ротация IP, retry — docs/04 §3, §5), а не прямым
+httpx — POST /vacancies/manual обязан идти тем же защитным путём, что и
+парсинг через воркер.
 
 Ошибки:
     VacancyNotFound — на hh.ru ответ 404/410: вакансия удалена
                       (docs/04 §5 → статус vacancy = error);
-    RawParseError   — сеть/статус/вёрстка не дали данных (капча, changed layout).
+    RawParseError   — сеть/статус/вёрстка не дали данных (капча, changed layout);
+    CaptchaDetected / RateLimitExceeded — пробрасываются AntiBanSession
+                      (docs/04 §5 → 503 в API, задачу/запрос нужно повторить).
 """
 
 from __future__ import annotations
 
-import asyncio
 import re
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 
-import httpx
+from app.modules.anti_ban import (
+    AntiBanSession,
+    CaptchaDetected,  # noqa: F401 — часть публичного контракта модуля
+    ProxyError,
+    RateLimitExceeded,  # noqa: F401 — часть публичного контракта модуля
+)
 
 __all__ = [
     "RawParseError",
     "VacancyNotFound",
     "fetch_raw_vacancy",
     "extract_vacancy_fields",
+    "get_anti_ban_session",
 ]
 
-# Минимальный набор браузерных заголовков (docs/04 §3.3 — полноценная маскировка
-# живёт в Proxy & Anti-Ban Module; для одного запроса достаточно User-Agent).
-_HEADERS = {
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-    ),
-}
+#: Общая сессия обхода защит hh.ru: прогрев и cookies переиспользуются между
+#: запросами ручного добавления (docs/04 §3.3).
+_anti_ban_session: AntiBanSession | None = None
 
-_DEFAULT_TIMEOUT = 15.0
 
-#: Пауза перед повтором сетевого запроса (линейный рост: 1 с, 2 с, …).
-_RETRY_DELAY_SECONDS = 1.0
+def get_anti_ban_session() -> AntiBanSession:
+    """Ленивая AntiBanSession для первичного raw-парсинга (docs/04 §3).
+
+    ``build_page_fetcher`` импортируется внутри функции: vacancy_storage и
+    parsing зависят друг от друга, и импорт на уровне модуля замкнул бы цикл.
+    """
+    global _anti_ban_session
+    if _anti_ban_session is None:
+        from app.modules.parsing.fetcher import build_page_fetcher
+
+        _anti_ban_session = AntiBanSession(fetcher=build_page_fetcher())
+    return _anti_ban_session
 
 # data-qa → модельные поля (best-effort: отсутствующие поля остаются None).
 # Список содержит актуальные имена hh.ru и legacy-варианты: при смене вёрстки
@@ -311,54 +321,38 @@ def extract_vacancy_fields(html: str) -> dict[str, str | int | datetime | None]:
     }
 
 
-async def fetch_raw_vacancy(
-    url: str,
-    *,
-    timeout: float = _DEFAULT_TIMEOUT,
-    attempts: int = 3,
-) -> dict:
-    """Один GET на детальную страницу + извлечение минимального набора данных.
+async def fetch_raw_vacancy(url: str) -> dict:
+    """GET карточки вакансии через AntiBanSession + извлечение полей (docs/04 §3, §5).
 
-    Поднимает VacancyNotFound (404/410 → vacancy.status = 'error', docs/04 §5)
-    или RawParseError (сеть/неожиданный статус/не разобрана вёрстка).
+    Сессия сама обеспечивает прогрев homepage, human-паузы 4–8 с, ротацию IP,
+    cookies и retry по таблице docs/04 §5 — POST /vacancies/manual больше не
+    ходит в hh.ru прямым httpx.
 
-    Кратковременные сетевые сбои hh.ru (обрыв, таймаут, 5xx) не считаются
-    ошибкой парсинга: выполняется до `attempts` попыток с паузой (docs/04 §5 —
-    сетевые ошибки обрабатываются повтором, а не роняют задачу).
+    Поднимает:
+        VacancyNotFound    — 404/410 → vacancy.status = 'error' (docs/04 §5);
+        RawParseError      — неожиданный статус/не разобрана вёрстка;
+        CaptchaDetected     — капча (docs/04 §2 п.3, §5) → 503 CAPTCHA_DETECTED;
+        RateLimitExceeded  — 429 не отступил за попытки → 503 HH_RATE_LIMITED;
+        ProxyError         — живых прокси нет → RawParseError.
     """
-    last_error: Exception | None = None
+    session = get_anti_ban_session()
+    try:
+        response = await session.fetch(url)
+    except ProxyError as exc:
+        raise RawParseError(f"Запрос к hh.ru не удался: {exc}") from exc
 
-    for attempt in range(1, max(1, attempts) + 1):
-        try:
-            async with httpx.AsyncClient(
-                headers=_HEADERS, follow_redirects=True, timeout=timeout
-            ) as client:
-                response = await client.get(url)
-        except httpx.HTTPError as exc:
-            last_error = exc
-            if attempt < attempts:
-                await asyncio.sleep(_RETRY_DELAY_SECONDS * attempt)
-                continue
-            raise RawParseError(f"Запрос к hh.ru не удался: {exc}") from exc
+    # 404/410 — вакансия удалена, повтор не поможет (docs/04 §5).
+    if response.status_code in (404, 410):
+        raise VacancyNotFound(
+            f"Вакансия не найдена на hh.ru (HTTP {response.status_code})"
+        )
+    if response.status_code != 200:
+        raise RawParseError(f"Неожиданный ответ hh.ru: HTTP {response.status_code}")
 
-        # 404/410 — вакансия удалена, повтор не поможет (docs/04 §5).
-        if response.status_code in (404, 410):
-            raise VacancyNotFound(
-                f"Вакансия не найдена на hh.ru (HTTP {response.status_code})"
-            )
-        # Серверная ошибка hh.ru — пробуем ещё раз.
-        if response.status_code >= 500 and attempt < attempts:
-            await asyncio.sleep(_RETRY_DELAY_SECONDS * attempt)
-            continue
-        if response.status_code != 200:
-            raise RawParseError(f"Неожиданный ответ hh.ru: HTTP {response.status_code}")
-
-        fields = extract_vacancy_fields(response.text)
-        if not fields.get("title"):
-            # Капча или изменившаяся вёрстка: повтор не помогает (docs/04 §5).
-            raise RawParseError(
-                "Не удалось извлечь карточку вакансии (капча или изменилась вёрстка)"
-            )
-        return fields
-
-    raise RawParseError(f"Запрос к hh.ru не удался: {last_error}")
+    fields = extract_vacancy_fields(response.text)
+    if not fields.get("title"):
+        # Капча или изменившаяся вёрстка: повтор не помогает (docs/04 §5).
+        raise RawParseError(
+            "Не удалось извлечь карточку вакансии (капча или изменилась вёрстка)"
+        )
+    return fields

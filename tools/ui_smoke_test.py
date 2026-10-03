@@ -113,6 +113,32 @@ def run_checks() -> int:
         check(True, "Автопоиск запущен, карточка задачи появилась")
         page.wait_for_selector(".fap-item", timeout=15000)
         check(page.locator(".fap-item").count() >= 1, "Fadeout-action-popup показан после действия")
+
+        # Чёрный список слов: тумблер + поле ввода (docs/04 §4.9).
+        check(
+            page.is_visible("#auto-blacklist-enabled"),
+            "Тумблер «Чёрный список слов» виден в автопоиске",
+        )
+        check(
+            page.is_visible("#auto-blacklist-words"),
+            "Поле слов чёрного списка видно в автопоиске",
+        )
+        # По умолчанию тумблер выключен → поле заблокировано.
+        check(
+            page.is_disabled("#auto-blacklist-words input"),
+            "При выключенном тумблере ввод слов заблокирован",
+        )
+        page.check("#auto-blacklist-enabled")
+        check(
+            page.is_enabled("#auto-blacklist-words input"),
+            "После включения тумблера поле слов доступно",
+        )
+        page.fill("#auto-blacklist-words input", "ТК РФ")
+        page.keyboard.press("Enter")
+        check(
+            page.locator("#auto-blacklist-words .tag-chip").count() == 1,
+            "Слово добавлено в чёрный список",
+        )
         screenshot(page, "desktop-dashboard")
 
         # Вкладка анализа.
@@ -157,6 +183,34 @@ def run_checks() -> int:
         )
         check(True, "compact_resume загружен и отображается в профиле")
         check(page.is_visible("#profile-threshold"), "Слайдер порога матчинга отображается")
+
+        # Новые поля профиля: предпочтения анализа и хвост письма.
+        check(
+            page.is_visible("#profile-analysis-preferences"),
+            "Поле «Предпочтения в анализах» отображается",
+        )
+        check(
+            page.is_visible("#profile-resume-addition"),
+            "Поле «Хотите добавить информацию в конец резюме?» отображается",
+        )
+        check(
+            page.input_value("#profile-analysis-preferences").strip() != "",
+            "Предпочтения загружены из профиля",
+        )
+        check(
+            page.input_value("#profile-resume-addition").strip() != "",
+            "Текст для конца резюме загружен из профиля",
+        )
+        # Сохранение новых полей через PUT /profile.
+        page.fill("#profile-analysis-preferences", "не хочу трудоустройство по ТК РФ")
+        page.fill("#profile-resume-addition", "Готов к собеседованию в удобное время.")
+        page.click("#btn-save-profile")
+        page.wait_for_selector(".fap-item", timeout=10000)
+        check(
+            page.input_value("#profile-analysis-preferences") == "не хочу трудоустройство по ТК РФ",
+            "Предпочтения сохраняются без ошибок",
+        )
+
         page.click("#btn-convert-resume")
         page.wait_for_selector(".fap-item", timeout=10000)
         check(True, "Уведомление о запуске convert_resume показано")

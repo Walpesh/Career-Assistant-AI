@@ -1,0 +1,26 @@
+# Docker build context exclusions (keep image lean, avoid leaking secrets).
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.git/
+.gitignore
+.env
+.env.*
+!.env.example
+backend/.venv/
+backend/__pycache__/
+backend/.pytest_cache/
+pytest_*.txt
+uvicorn_*.txt
+live*_out.txt
+live*_err.txt
+llm_*.txt
+node_modules/
+frontend/node_modules/
+tools/.artifacts/
+*.log

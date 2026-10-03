@@ -25,11 +25,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError
-from app.db.models import Analysis, CoverLetter, Task, Vacancy
+from app.db.models import Analysis, CoverLetter, Task
 from app.db.session import get_db
 from app.modules.auth.deps import get_current_user
 from app.modules.queue_manager.queues import QueueUnavailable, enqueue_task
 from app.modules.realtime.bus import publish_event
+from app.modules.vacancy_storage.service import get_user_vacancy
 
 analysis_router = APIRouter(prefix="/analysis", tags=["analysis"])
 letters_router = APIRouter(prefix="/letters", tags=["letters"])
@@ -51,7 +52,11 @@ class RunAnalysisRequest(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    vacancy_ids: list[uuid.UUID] = Field(..., description="Список ID вакансий для анализа")
+    vacancy_ids: list[uuid.UUID] = Field(
+        ...,
+        max_length=100,
+        description="Список ID вакансий для анализа (не более 100 за раз)",
+    )
     mode: Literal["analyze", "letter", "analyze_and_letter", "auto"] = Field(
         default="analyze", description="Режим обработки"
     )
@@ -112,11 +117,9 @@ async def run_analysis(
     if not payload.vacancy_ids:
         raise AppError(400, "Не указаны вакансии для анализа", "INVALID_VACANCY_IDS")
 
-    # Проверяем, что вакансии принадлежат пользователю
+    # Проверяем, что вакансии принадлежат пользователю (IDOR: чужие → 404).
     for vid in payload.vacancy_ids:
-        vacancy = await db.get(Vacancy, vid)
-        if vacancy is None or vacancy.user_id != user.id:
-            raise AppError(404, f"Вакансия {vid} не найдена", "NOT_FOUND")
+        await get_user_vacancy(db, user.id, vid)
 
     # Тип задачи соответствует режиму (docs/02 §3.6, фронтенд docs/03 §6):
     # analyze → analyze, letter → generate_letter, остальное → auto_full.
@@ -172,7 +175,12 @@ async def get_analysis(
     user = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> AnalysisOut:
-    """Получить анализ вакансии."""
+    """Получить анализ вакансии.
+
+    IDOR-защита: сначала проверяется владение вакансией (get_user_vacancy);
+    чужая/неизвестная вакансия → 404 (без утечки существования).
+    """
+    await get_user_vacancy(db, user.id, vacancy_id)
     analysis = await db.scalar(
         select(Analysis).where(Analysis.vacancy_id == vacancy_id)
     )
@@ -193,7 +201,12 @@ async def get_letter(
     user = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> LetterOut:
-    """Получить сопроводительное письмо."""
+    """Получить сопроводительное письмо.
+
+    IDOR-защита: сначала проверяется владение вакансией (get_user_vacancy);
+    чужая/неизвестная вакансия → 404.
+    """
+    await get_user_vacancy(db, user.id, vacancy_id)
     letter = await db.scalar(
         select(CoverLetter).where(CoverLetter.vacancy_id == vacancy_id)
     )

@@ -26,6 +26,7 @@ from app.db.models import Analysis, CoverLetter, UserProfile, Vacancy
 from app.modules.analysis_letter.llm import (
     LLMError,
     analyze_vacancy,
+    append_resume_addition,
     generate_cover_letter,
 )
 
@@ -87,6 +88,9 @@ def _vacancy_fields(vacancy: Vacancy, profile: UserProfile | None) -> dict[str, 
     if profile is not None:
         fields["skills"] = profile.skills
         fields["experience_years"] = float(profile.experience_years) if profile.experience_years is not None else None
+        # Пожелания кандидата на человеческом языке (docs/05 §4) — напрямую
+        # влияют на этап анализа: модель учитывает их при оценке вакансии.
+        fields["analysis_preferences"] = profile.analysis_preferences
     return fields
 
 
@@ -218,16 +222,40 @@ async def process_vacancy(
             outcome.status = vacancy.status
             return outcome
 
+        # «Хотите добавить информацию в конец резюме?» — скриптовый вызов в конце
+        # обработки вакансии: текст из профиля дописывается «с красной строки».
+        content = append_resume_addition(
+            content,
+            profile.resume_addition if profile else None,
+        )
+
         letter = await _save_letter(db, vacancy, content, {"length": len(content)})
         await db.commit()
         await db.refresh(vacancy)
         outcome.letter_generated = True
         outcome.letter_version = int(letter.version)
 
-        if vacancy.status != "applied":
+        # docs/02 §5: letter_ready = «Есть анализ + сопроводительное письмо».
+        # Без записи в analyses статус не выставляется (например, режим letter
+        # для вакансии, у которой анализа никогда не было) — иначе граф
+        # статусов docs/02 §5 расходится с содержимым таблиц.
+        has_analysis = (
+            await db.scalar(
+                select(Analysis.id).where(Analysis.vacancy_id == vacancy.id)
+            )
+            is not None
+        )
+        if vacancy.status != "applied" and has_analysis:
             vacancy.status = "letter_ready"
             await db.commit()
             await db.refresh(vacancy)
+        elif not has_analysis:
+            logger.info(
+                "Письмо v%d готово для %s, но analyses пуста — статус %s не меняется",
+                letter.version,
+                vacancy.hh_vacancy_id,
+                vacancy.status,
+            )
         outcome.status = vacancy.status
 
     return outcome

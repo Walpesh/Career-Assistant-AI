@@ -1,6 +1,6 @@
 /* ============================================================
    WebSocket-клиент реал-тайм событий (docs/03_API_CONTRACTS.md §8).
-   Подключение: {api-base}/ws?token=<access_token>
+   Подключение: {api-base}/ws?ticket=<one-time-ticket> (POST /auth/ws-ticket)
    События сервера: task.*, vacancy.updated, analysis.ready, letter.ready, popup.
    Клиент только слушает; команды — через REST.
 
@@ -26,7 +26,6 @@ export class RealtimeClient {
    */
   constructor(options = {}) {
     this.socket = null;
-    this.token = null;
     this.attempt = 0;
     this.manualClose = false;
     this.reconnectTimer = null;
@@ -34,19 +33,21 @@ export class RealtimeClient {
     this.status = 'disconnected';
     this.isAuthenticated = true; // Флаг для отслеживания, нужно ли переподключение
     this.everConnected = false;
+    // Провайдер одноразового WS-тикета (docs/03 §8): вызывается при каждом
+    // подключении/переподключении, т.к. тикет одноразовый (Redis GETDEL).
+    this.getTicket = options.getTicket || (async () => null);
     this.onUnauthorized = options.onUnauthorized || (() => emit('auth:expired'));
   }
 
-  connect(token) {
-    this.token = token;
+  connect() {
     this.manualClose = false;
     this.isAuthenticated = true;
     this.open();
   }
 
-  open() {
-    // Не пытаемся подключиться без токена или при ручном закрытии
-    if (!this.token || this.manualClose || !this.isAuthenticated) return;
+  async open() {
+    // Не пытаемся подключиться при ручном закрытии / ошибке аутентификации.
+    if (this.manualClose || !this.isAuthenticated) return;
 
     clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
@@ -57,9 +58,22 @@ export class RealtimeClient {
 
     this.setStatus('connecting');
 
+    // Одноразовый тикет запрашивается заново на каждое подключение.
+    let ticket;
+    try {
+      ticket = await this.getTicket();
+    } catch {
+      ticket = null;
+    }
+    if (this.manualClose || !this.isAuthenticated) return;
+    if (!ticket) {
+      this.scheduleReconnect();
+      return;
+    }
+
     let socket;
     try {
-      socket = new WebSocket(buildWsUrl(this.token));
+      socket = new WebSocket(buildWsUrl(ticket));
     } catch {
       this.scheduleReconnect();
       return;

@@ -28,6 +28,7 @@ from app.modules.queue_manager.queues import (
     PARSING_JOB,
     PARSING_QUEUE,
     QueueUnavailable,
+    abort_job,
     enqueue_task,
     queue_for_task_type,
     recover_pending_tasks,
@@ -257,6 +258,53 @@ def test_worker_settings_split_parsing_and_llm():
     assert llm["max_jobs"] == 1
 
 
+def test_worker_settings_graceful_shutdown_hooks():
+    """WorkerSettings: SIGTERM-обработка + startup/shutdown хуки (production)."""
+    from app.modules.queue_manager import worker as worker_module
+
+    for cls in (ParsingQueueSettings, LLMQueueSettings):
+        kwargs = cls.as_worker_kwargs()
+        # ARQ сам обрабатывает SIGTERM/SIGINT: активные job'ы завершаются.
+        assert kwargs["handle_signals"] is True
+        assert cls.handle_signals is True
+        # Startup: восстановление задач под Redis-блокировкой SET NX EX.
+        assert kwargs["on_startup"] is worker_module._on_worker_startup
+        assert kwargs["on_shutdown"] is worker_module._on_worker_shutdown
+        assert callable(worker_module.install_signal_handlers)
+
+
+async def test_recover_lock_single_winner(queue_pool):
+    """SET NX EX: только один процесс выполняет recover_pending_tasks."""
+    from app.modules.queue_manager.queues import RECOVER_LOCK_KEY, acquire_recover_lock
+
+    assert await acquire_recover_lock(queue_pool) is True
+    assert await acquire_recover_lock(queue_pool) is False
+    # Другой пул (другая реплика) тоже видит занятую блокировку глобально?
+    # RecordingPool локален — проверяем контракт на том же пуле.
+    assert queue_pool._kv[RECOVER_LOCK_KEY] == "1"
+
+
+async def test_recover_skipped_when_lock_taken(engine, queue_pool):
+    """Процесс без блокировки возвращает 0 и не трогает БД."""
+    from app.modules.queue_manager import queues as queues_module
+
+    async def _locked(_redis: object, ttl_seconds: int | None = None) -> bool:
+        _ = (ttl_seconds,)
+        return False
+
+    monkeypatch_lock = _locked
+    orig = queues_module.acquire_recover_lock
+    queues_module.acquire_recover_lock = monkeypatch_lock  # type: ignore[assignment]
+    try:
+        factory, _ = await _make_task_row(
+            engine, "parse_manual", "pending", {"vacancy_url": "https://hh.ru/vacancy/1"}
+        )
+        assert await recover_pending_tasks(factory, pool=queue_pool) == 0
+        assert queue_pool.jobs == []
+    finally:
+        queues_module.acquire_recover_lock = orig
+
+
 def test_worker_job_paths_are_importable():
     """Пути job-функций резолвятся в реальные корутины (иначе ARQ не найдёт их)."""
     import importlib
@@ -373,5 +421,196 @@ async def test_recover_without_redis_is_noop(engine, monkeypatch):
     monkeypatch.setattr(queues_module, "get_pool", _no_pool)
 
     assert await recover_pending_tasks(factory) == 0
+
+
+async def test_recover_reenqueues_when_job_id_deduplicated(engine, queue_pool):
+    """Потеря задачи при восстановлении: дедупликация _job_id → abort + суффикс.
+
+    После сбоя ключ зависшего job'а ещё жив в Redis: наивный enqueue_task
+    вернёт None и задача «повиснет» (в БД pending, в очереди — нет). recover
+    обязан снять старый job и пере-поставить с уникальным attempt-суффиксом.
+    """
+    factory, task_id = await _make_task_row(
+        engine, "parse_manual", "pending", {"vacancy_url": "https://hh.ru/vacancy/9"}
+    )
+
+    # «Старый» job с тем же _job_id уже есть в очереди (ключ пережил сбой).
+    stale = await queue_pool.enqueue_job(
+        PARSING_JOB,
+        str(task_id),
+        _job_id=f"parse_manual:{task_id}",
+        _queue_name=PARSING_QUEUE,
+    )
+    assert stale is not None
+
+    restored = await recover_pending_tasks(factory, pool=queue_pool)
+
+    assert restored == 1
+    assert len(queue_pool.jobs) == 1  # старый снят, новый поставлен
+    job_id = queue_pool.jobs[0]["job_id"]
+    assert job_id.startswith(f"parse_manual:{task_id}:recover-")
+    assert queue_pool.jobs[0]["args"] == (str(task_id),)
+
+
+async def test_abort_job_removes_job_from_queue(queue_pool):
+    """abort_job снимает job из очереди — основа отмены задачи (docs/04 §6)."""
+    task_id = uuid.uuid4()
+    await enqueue_task(task_id, "parse_auto", pool=queue_pool)
+    assert len(queue_pool.jobs) == 1
+
+    assert await abort_job(task_id, "parse_auto", pool=queue_pool) is True
+    assert queue_pool.jobs == []
+    # Повторный abort — идемпотентен.
+    assert await abort_job(task_id, "parse_auto", pool=queue_pool) is False
+
+
+# --- отмена/возобновление через API (docs/03 §7) ----------------------------
+
+API = "/api/v1"
+_PASSWORD = "strongpassword"
+
+
+async def _register_and_login(client) -> tuple[str, dict]:
+    """Регистрация + вход → (user_id, auth-заголовки)."""
+    email = f"q{uuid.uuid4().hex[:10]}@test.dev"
+    response = await client.post(
+        f"{API}/auth/register", json={"email": email, "password": _PASSWORD}
+    )
+    assert response.status_code == 201, response.text
+    user_id = response.json()["id"]
+
+    response = await client.post(
+        f"{API}/auth/login", json={"email": email, "password": _PASSWORD}
+    )
+    assert response.status_code == 200, response.text
+    return user_id, {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+
+async def _create_task_row(
+    engine,
+    user_id,
+    *,
+    task_type: str = "parse_auto",
+    status: str = "pending",
+    related_vacancy_id=None,
+):
+    """Задача конкретного пользователя (для endpoint'ов /tasks/*)."""
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.db.models import Task
+
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        task = Task(
+            user_id=uuid.UUID(str(user_id)),
+            task_type=task_type,
+            status=status,
+            payload={"keywords": ["x"]},
+            related_vacancy_id=related_vacancy_id,
+        )
+        session.add(task)
+        await session.commit()
+        await session.refresh(task)
+        return task.id
+
+
+async def test_cancel_aborts_job_and_publishes_events(client, engine, queue_pool):
+    """Отмена: job снимается из Redis, статус failed + события в UI (docs/03 §8)."""
+    import json as jsonlib
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.db.models import Task
+
+    user_id, headers = await _register_and_login(client)
+    task_id = await _create_task_row(engine, user_id)
+
+    # Задача уже стоит в очереди — отмена обязана её оттуда убрать.
+    await enqueue_task(task_id, "parse_auto", pool=queue_pool)
+    assert len(queue_pool.jobs) == 1
+
+    response = await client.post(f"{API}/tasks/{task_id}/cancel", headers=headers)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["cancelled"] is True and body["status"] == "failed"
+
+    # 1) Job снят из очереди Redis (иначе воркер подхватит отменённую задачу).
+    assert queue_pool.jobs == []
+
+    # 2) События task.cancelled + task.failed ушли в Realtime Module.
+    events = {jsonlib.loads(m)["event"] for m in queue_pool.published}
+    assert {"task.cancelled", "task.failed"} <= events
+
+    # 3) Статус в БД: failed + timezone-aware finished_at (docs/02 §3.6).
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        task = await session.get(Task, task_id)
+    assert task.status == "failed"
+    assert task.error_message == "Отменено пользователем"
+    assert task.finished_at is not None and task.finished_at.tzinfo is not None
+
+
+async def test_cancel_blocked_when_vacancy_applied(client, engine, queue_pool):
+    """docs/02 §5: applied — терминальный статус, отмена задачи блокируется (409)."""
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.db.models import Task, Vacancy
+
+    user_id, headers = await _register_and_login(client)
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        vacancy = Vacancy(
+            user_id=uuid.UUID(str(user_id)),
+            hh_vacancy_id=uuid.uuid4().hex[:8],
+            url="https://hh.ru/vacancy/1",
+            title="Python Dev",
+            status="applied",
+            source="manual",
+        )
+        session.add(vacancy)
+        await session.commit()
+        await session.refresh(vacancy)
+        vacancy_id = vacancy.id
+
+    task_id = await _create_task_row(
+        engine, user_id, task_type="analyze", related_vacancy_id=vacancy_id
+    )
+
+    response = await client.post(f"{API}/tasks/{task_id}/cancel", headers=headers)
+    assert response.status_code == 409, response.text
+    assert response.json()["error_code"] == "VACANCY_APPLIED"
+
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        task = await session.get(Task, task_id)
+    assert task.status == "pending"  # отмены не было
+
+
+async def test_resume_returns_waiting_captcha_task_to_queue(client, engine, queue_pool):
+    """POST /tasks/{id}/resume: waiting_captcha → pending + job в очереди."""
+    import json as jsonlib
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.db.models import Task
+
+    user_id, headers = await _register_and_login(client)
+    task_id = await _create_task_row(engine, user_id, status="waiting_captcha")
+
+    # Resume принимает только waiting_captcha.
+    other_id = await _create_task_row(engine, user_id, status="pending")
+    blocked = await client.post(f"{API}/tasks/{other_id}/resume", headers=headers)
+    assert blocked.status_code == 409
+    assert blocked.json()["error_code"] == "TASK_NOT_WAITING_CAPTCHA"
+
+    response = await client.post(f"{API}/tasks/{task_id}/resume", headers=headers)
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "pending"
+
+    # Задача снова в очереди Redis + событие task.resumed для UI.
+    assert [job["args"][0] for job in queue_pool.jobs] == [str(task_id)]
+    events = {jsonlib.loads(m)["event"] for m in queue_pool.published}
+    assert "task.resumed" in events
+
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        task = await session.get(Task, task_id)
+    assert task.status == "pending"
+    assert task.error_message is None
 
 

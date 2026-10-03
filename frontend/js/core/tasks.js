@@ -100,7 +100,36 @@ export async function initTaskTracking() {
 
   on('ws:task.failed', (payload) => {
     if (!payload?.task_id) return;
-    upsert({ id: payload.task_id, status: 'failed', error_message: payload.error || 'Неизвестная ошибка', finished_at: new Date().toISOString() });
+    // waiting_captcha приходит как task.failed со status (docs/03 §8):
+    // капча — это пауза задачи, а не её финальная ошибка.
+    const status = payload.status === 'waiting_captcha' ? 'waiting_captcha' : 'failed';
+    upsert({
+      id: payload.task_id,
+      status,
+      error_message: payload.error || 'Неизвестная ошибка',
+      finished_at: status === 'failed' ? new Date().toISOString() : null
+    });
+  });
+
+  on('ws:task.cancelled', (payload) => {
+    if (!payload?.task_id) return;
+    upsert({
+      id: payload.task_id,
+      status: payload.status || 'failed',
+      error_message: payload.error || 'Отменено пользователем',
+      finished_at: new Date().toISOString()
+    });
+  });
+
+  on('ws:task.resumed', (payload) => {
+    if (!payload?.task_id) return;
+    // waiting_captcha → pending: снова активна, слот освобождён для очереди.
+    upsert({
+      id: payload.task_id,
+      status: payload.status || 'pending',
+      error_message: null,
+      finished_at: null
+    });
   });
 
   // Переподключение WS: события могли потеряться — перечитываем задачи.

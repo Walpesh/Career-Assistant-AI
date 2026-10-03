@@ -29,7 +29,9 @@ backend/
 │       └── realtime/           # WebSocket-доставка событий         → /ws
 ├── alembic.ini                 # Конфигурация Alembic (async, URL из .env)
 ├── alembic/                    # Миграции: env.py (async) + versions/
-├── requirements.txt
+├── pyproject.toml              # Зависимости + ruff/mypy/pytest/coverage
+├── requirements.lock           # Запиненные версии (production/Docker/CI)
+├── worker_entry.py             # Standalone ARQ-воркеры (parsing|llm)
 └── .env.example
 ```
 
@@ -58,14 +60,28 @@ python -m alembic upgrade head
 cd backend
 python -m venv .venv
 .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r requirements.lock
 copy .env.example .env   # при необходимости отредактируйте
 uvicorn app.main:app --reload --port 8000
 ```
 
 - `http://localhost:8000/health` — проверка живости.
+- `http://localhost:8000/health/live` — liveness (Kubernetes).
+- `http://localhost:8000/health/ready` — readiness (Postgres/Redis/Ollama).
 - `http://localhost:8000/api/v1/...` — REST по контракту.
 - `http://localhost:8000/` — отдача собранного frontend (`../frontend`, если каталог существует).
+
+## Production (Docker)
+
+```powershell
+# Требуется: JWT_SECRET (>=32 символов) в окружении
+$env:JWT_SECRET="..."
+docker compose config          # проверка сборки контейнеров
+docker compose up --build -d   # postgres:16, redis:7, api, worker-parsing ×N,
+                               # worker-llm ×1, ollama, frontend (nginx)
+docker compose up --scale worker-parsing=3 -d  # масштабирование парсинга
+# worker-llm НЕ масштабировать: строго 1 реплика (1-concurrent-worker limit)
+```
 
 ## Правила модулей (docs/01 §5)
 

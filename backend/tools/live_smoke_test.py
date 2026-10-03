@@ -164,6 +164,8 @@ async def test_profile(client: httpx.AsyncClient, headers: dict) -> None:
         "desired_salary_to": 350000,
         "match_threshold": 65,
         "preferred_work_formats": ["remote", "hybrid"],
+        "analysis_preferences": "не хочу трудоустройство по ТК РФ, нужен удалённый формат",
+        "resume_addition": "Готов к собеседованию в удобное время.",
     })
     check("PUT /profile (полное обновление) → 200", r.status_code == 200, f"{r.status_code} {r.text[:300]}")
     body = r.json()
@@ -175,6 +177,11 @@ async def test_profile(client: httpx.AsyncClient, headers: dict) -> None:
           body.get("skills") == ["Python", "FastAPI", "PostgreSQL", "Redis", "Docker"], r.text[:200])
     check("PUT: preferred_work_formats сохранён",
           body.get("preferred_work_formats") == ["remote", "hybrid"], r.text[:200])
+    check("PUT: analysis_preferences сохранён",
+          body.get("analysis_preferences") == "не хочу трудоустройство по ТК РФ, нужен удалённый формат",
+          r.text[:200])
+    check("PUT: resume_addition сохранён",
+          body.get("resume_addition") == "Готов к собеседованию в удобное время.", r.text[:200])
 
     r = await client.put(f"{PREFIX}/profile", headers=headers, json={"desired_salary_from": 200000})
     b2 = r.json()

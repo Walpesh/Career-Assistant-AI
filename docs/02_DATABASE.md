@@ -21,6 +21,7 @@
 | `analyses`            | Результаты анализа вакансий                     |
 | `cover_letters`       | Сгенерированные сопроводительные письма         |
 | `tasks`               | Очередь задач (для отображения прогресса)       |
+| `refresh_tokens`      | Реестр refresh-токенов (ротация, reuse detection)|
 
 ---
 
@@ -53,6 +54,8 @@
 | desired_salary_to     | INTEGER          |                              | Желаемая зарплата до                          |
 | match_threshold       | SMALLINT         | DEFAULT 70, CHECK (0–100)    | Порог матчинга по умолчанию (%)               |
 | preferred_work_formats| TEXT[]           |                              | Предпочитаемые форматы работы                 |
+| analysis_preferences  | TEXT             |                              | Пожелания на человеческом языке; влияют на LLM-анализ (docs/05 §4) |
+| resume_addition       | TEXT             |                              | Текст, дописываемый «с красной строки» в конец письма (docs/05 §5) |
 | created_at            | TIMESTAMPTZ      | DEFAULT now()                |                                               |
 | updated_at            | TIMESTAMPTZ      | DEFAULT now()                |                                               |
 
@@ -130,9 +133,11 @@
 | id                | UUID             | PRIMARY KEY                              |                                               |
 | user_id           | UUID             | NOT NULL, FK → users.id                 | Владелец задачи                               |
 | task_type         | VARCHAR(64)      | NOT NULL                                | parse_auto / parse_group / parse_manual / analyze / generate_letter / auto_full / convert_resume |
-| status            | VARCHAR(32)      | NOT NULL, DEFAULT 'pending'             | pending / processing / completed / failed     |
+| status            | VARCHAR(32)      | NOT NULL, DEFAULT 'pending'             | pending / processing / completed / failed / waiting_captcha (CHECK ck_tasks_status) |
 | progress_current  | INTEGER          | DEFAULT 0                                | Текущий прогресс                              |
 | progress_total    | INTEGER          | DEFAULT 0                                | Общее количество шагов                        |
+| progress_stage    | VARCHAR(32)      |                                          | Последний этап прогресса (например parsing_vacancy / llm) |
+| progress_message  | TEXT             |                                          | Последнее сообщение прогресса — переживает перезагрузку страницы |
 | payload           | JSONB            |                                          | Входные параметры задачи                      |
 | result            | JSONB            |                                          | Результат выполнения                          |
 | error_message     | TEXT             |                                          | Текст ошибки (если failed)                    |
@@ -144,6 +149,44 @@
 **Индексы:**
 - INDEX (user_id, status)
 - INDEX (status, created_at) — для воркеров
+
+**Статусы `tasks.status`:**
+
+| Значение         | Когда                                                        |
+|------------------|--------------------------------------------------------------|
+| `pending`        | Создана и поставлена в очередь Redis                          |
+| `processing`     | Воркер начал выполнение (`started_at`)                        |
+| `completed`      | Успешно завершена (`finished_at`, `result`)                   |
+| `failed`         | Ошибка или отмена пользователем (`error_message`, `finished_at`) |
+| `waiting_captcha`| Обнаружена капча hh.ru — пауза под ручное вмешательство (docs/04 §2 п.3, §5); `finished_at` не проставляется, задача возвращается в очередь через `POST /tasks/{id}/resume` |
+
+---
+
+### 3.7. `refresh_tokens` (реестр refresh-токенов)
+
+Серверный учёт выданных refresh-токенов: хранится **только SHA-256 хэш**
+(`hashed_token`), сам токен в БД не пишется. Нужен для ротации и обнаружения
+reuse (кражи) токена.
+
+| Поле           | Тип              | Ограничения                              | Описание                                |
+|----------------|------------------|------------------------------------------|-----------------------------------------|
+| id             | UUID             | PRIMARY KEY, DEFAULT gen_random_uuid()   |                                         |
+| user_id        | UUID             | NOT NULL, FK → users.id (cascade delete) | Владелец токена                         |
+| jti            | VARCHAR(64)      | NOT NULL, UNIQUE                         | ID токена (JWT `jti`)                   |
+| hashed_token   | VARCHAR(64)      | NOT NULL, UNIQUE                         | SHA-256 хэш refresh-токена              |
+| user_agent     | VARCHAR(255)     |                                          | User-Agent клиента (audit)              |
+| expires_at     | TIMESTAMPTZ      | NOT NULL                                 | Срок жизни                              |
+| revoked_at     | TIMESTAMPTZ      |                                          | NULL = активен; иначе отозван/ротирован |
+| created_at     | TIMESTAMPTZ      | DEFAULT now()                            |                                         |
+
+**Логика:** при `/auth/refresh` токен ротируется (старый → `revoked_at`,
+новый создаётся). Повторное предъявление отозванного токена = reuse →
+отзываются **все** токены пользователя. `POST /auth/logout` ставит `revoked_at`.
+
+**Индексы:**
+- INDEX (user_id)
+- UNIQUE (jti)
+- UNIQUE (hashed_token)
 
 ---
 
@@ -158,6 +201,7 @@ users 1 ─────── 1 user_profiles
 │
 └─── 0..1 cover_letters
 users 1 ─────── < tasks
+users 1 ─────── < refresh_tokens
 vacancies 1 ─── < tasks (опционально)
 text---
 

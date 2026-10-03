@@ -63,6 +63,12 @@ VACANCY_CARD = """
 """
 
 
+VACANCY_CARD_BLACKLISTED = VACANCY_CARD.replace(
+    "Обязанности: разработка на Python.",
+    "Обязанности: разработка на Python. Оформление строго по ТК РФ.",
+)
+
+
 def _listing_html(vacancy_ids: list[str]) -> str:
     """Страница выдачи со встроенным JSON HH-Lux-InitialState (docs/04 §2)."""
     state = {
@@ -806,8 +812,12 @@ async def test_worker_limits_two_concurrent_parsers_per_user(
     assert left == []  # третья задача тоже выполнена
 
 
-async def test_worker_marks_task_failed_on_captcha(engine, user_factory, monkeypatch, queue_runner):
-    """docs/04 §5: капча → задача failed с понятным сообщением."""
+async def test_worker_marks_task_waiting_captcha(engine, user_factory, monkeypatch, queue_runner):
+    """docs/04 §2 п.3, §5: капча → waiting_captcha (пауза), а не failed.
+
+    Задача НЕ финализируется (finished_at is None) — её вернёт в очередь
+    POST /tasks/{task_id}/resume после ручного обхода капчи.
+    """
     from sqlalchemy.ext.asyncio import AsyncSession
 
     async def captcha_auto(self, db, **kwargs):
@@ -825,9 +835,9 @@ async def test_worker_marks_task_failed_on_captcha(engine, user_factory, monkeyp
     async with AsyncSession(engine, expire_on_commit=False) as session:
         task = await session.get(Task, task_id)
 
-    assert task.status == "failed"
+    assert task.status == "waiting_captcha"
     assert "капча" in (task.error_message or "").lower()
-    assert task.finished_at is not None
+    assert task.finished_at is None  # не завершена — ждёт resume
 
 
 async def test_worker_marks_task_failed_on_unexpected_error(
@@ -1066,4 +1076,227 @@ async def test_auto_endpoint_accepts_multiple_filters_at_once(client, engine):
         json={"keywords": ["python"], "work_formats": ["teleport"]},
         headers=headers,
     )
-    assert unknown.status_code == 400
+# --- docs/04 §4.9: чёрный список слов ---------------------------------------
+
+
+def test_normalize_blacklist_strips_dedups_and_limits():
+    """docs/04 §4.9: нормализация списка — обрезка, дедупликация, лимит."""
+    from app.modules.parsing.service import MAX_BLACKLIST_WORDS, normalize_blacklist
+
+    assert normalize_blacklist(["  ТК РФ  ", "тк рф", "", None, "   "]) == ["ТК РФ"]
+    assert normalize_blacklist(None) == []
+    assert normalize_blacklist("a\nb, c") == ["a", "b", "c"]
+    assert len(normalize_blacklist([f"w{i}" for i in range(200)])) == MAX_BLACKLIST_WORDS
+
+
+def test_is_blacklisted_matches_case_insensitively():
+    """docs/04 §4.9: поиск регистронезависимый по тексту вакансии."""
+    from app.modules.parsing.service import is_blacklisted
+
+    fields = {"title": "Python", "description_raw": "Оформление строго по тк рф."}
+    assert is_blacklisted(fields, ["ТК РФ"]) == ["ТК РФ"]
+    assert is_blacklisted(fields, ["тк рф"]) == ["тк рф"]
+    assert is_blacklisted(fields, ["ГПХ"]) == []
+    assert is_blacklisted(fields, []) == []
+
+
+async def test_blacklist_prevents_saving_vacancy(engine, user_factory):
+    """docs/04 §4.9: найдено чёрное слово → вакансия не сохраняется в БД."""
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    user_id = await user_factory()
+    base = "https://hh.ru/search/vacancy?text=python"
+    orchestrator = ParsingOrchestrator(session=FakeSession({
+        build_page_url(base, 0): FetchResponse(
+            status_code=200, text=_listing_html(["111", "222"]), url=""
+        ),
+        "https://hh.ru/vacancy/111": FetchResponse(
+            status_code=200, text=VACANCY_CARD_BLACKLISTED, url=""
+        ),
+        "https://hh.ru/vacancy/222": FetchResponse(
+            status_code=200, text=VACANCY_CARD, url=""
+        ),
+    }))
+
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        outcome = await orchestrator.run_auto(
+            session,
+            user_id=user_id,
+            keywords=["python"],
+            max_pages=1,
+            blacklist=["ТК РФ"],
+        )
+        rows = await _vacancies(session, user_id)
+
+    assert outcome.blacklisted == 1
+    assert outcome.created == 1
+    assert [row.hh_vacancy_id for row in rows] == ["222"]
+
+
+async def test_blacklist_deletes_already_saved_vacancy(engine, user_factory):
+    """docs/04 §4.9: ранее сохранённая вакансия из чёрного списка удаляется."""
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    user_id = await user_factory()
+    base = "https://hh.ru/search/vacancy?text=python"
+    pages = {
+        build_page_url(base, 0): FetchResponse(
+            status_code=200, text=_listing_html(["111"]), url=""
+        ),
+        "https://hh.ru/vacancy/111": FetchResponse(
+            status_code=200, text=VACANCY_CARD_BLACKLISTED, url=""
+        ),
+    }
+
+    # Первый проход — фильтр выключен, вакансия сохраняется.
+    plain = ParsingOrchestrator(session=FakeSession(pages))
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        await plain.run_auto(session, user_id=user_id, keywords=["python"], max_pages=1)
+        assert len(await _vacancies(session, user_id)) == 1
+
+    # Второй проход — та же вакансия, но с включённым чёрным списком.
+    filtered = ParsingOrchestrator(session=FakeSession(pages))
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        outcome = await filtered.run_auto(
+            session,
+            user_id=user_id,
+            keywords=["python"],
+            max_pages=1,
+            blacklist=["ТК РФ"],
+        )
+        rows = await _vacancies(session, user_id)
+
+    assert outcome.blacklisted == 1
+    assert outcome.created == 0
+    assert rows == []
+
+
+async def test_empty_blacklist_keeps_previous_behaviour(engine, user_factory):
+    """docs/04 §4.9: выключенный фильтр → вакансии сохраняются как раньше."""
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    user_id = await user_factory()
+    base = "https://hh.ru/search/vacancy?text=python"
+    orchestrator = ParsingOrchestrator(session=FakeSession({
+        build_page_url(base, 0): FetchResponse(
+            status_code=200, text=_listing_html(["111"]), url=""
+        ),
+        "https://hh.ru/vacancy/111": FetchResponse(
+            status_code=200, text=VACANCY_CARD_BLACKLISTED, url=""
+        ),
+    }))
+
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        outcome = await orchestrator.run_auto(
+            session, user_id=user_id, keywords=["python"], max_pages=1, blacklist=[]
+        )
+        rows = await _vacancies(session, user_id)
+
+    assert outcome.blacklisted == 0
+    assert outcome.created == 1
+    assert [row.hh_vacancy_id for row in rows] == ["111"]
+
+
+async def test_group_mode_applies_blacklist(engine, user_factory):
+    """docs/04 §4.9: чёрный список работает и в групповом парсере."""
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    user_id = await user_factory()
+    base = "https://novokuznetsk.hh.ru/vacancies/razrabotchik"
+    host = "https://novokuznetsk.hh.ru"
+    orchestrator = ParsingOrchestrator(session=FakeSession({
+        build_page_url(base, 0): FetchResponse(
+            status_code=200, text=_listing_html(["301"]), url=""
+        ),
+        f"{host}/vacancy/301": FetchResponse(
+            status_code=200, text=VACANCY_CARD_BLACKLISTED, url=""
+        ),
+    }))
+
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        outcome = await orchestrator.run_group(
+            session,
+            user_id=user_id,
+            search_url=base,
+            max_pages=1,
+            blacklist=["ТК РФ"],
+        )
+        rows = await _vacancies(session, user_id)
+
+    assert outcome.blacklisted == 1
+    assert rows == []
+
+
+async def test_worker_passes_blacklist_only_when_enabled(
+    engine, user_factory, queue_runner
+):
+    """docs/04 §4.9: тумблер включён — слова в оркестратор, выключен — пусто."""
+    original = service_module.ParsingOrchestrator.run_auto
+    captured: dict = {}
+
+    async def fake_run_auto(self, db, **kwargs):
+        captured.clear()
+        captured.update(kwargs)
+        return service_module.ParsingOutcome(vacancy_ids=["1"], created=1)
+
+    service_module.ParsingOrchestrator.run_auto = fake_run_auto
+    try:
+        enabled_id = await _make_task(engine, await user_factory(), "parse_auto", {
+            "keywords": ["python"],
+            "max_pages": 1,
+            "blacklist_enabled": True,
+            "blacklist_words": ["ТК РФ", " ГПХ ", "тк рф"],
+        })
+        await queue_runner.run_pending(engine, [enabled_id])
+        assert captured["blacklist"] == ["ТК РФ", "ГПХ"]
+
+        disabled_id = await _make_task(engine, await user_factory(), "parse_auto", {
+            "keywords": ["python"],
+            "max_pages": 1,
+            "blacklist_enabled": False,
+            "blacklist_words": ["ТК РФ"],
+        })
+        await queue_runner.run_pending(engine, [disabled_id])
+        assert captured["blacklist"] == []
+    finally:
+        service_module.ParsingOrchestrator.run_auto = original
+
+
+async def test_parse_endpoints_store_blacklist_payload(client, engine):
+    """docs/03 §5 + docs/04 §4.9: чёрный список попадает в payload задачи."""
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    headers = await _register(client)
+
+    auto = await client.post(
+        "/api/v1/parsing/auto",
+        json={
+            "keywords": ["python"],
+            "blacklist_enabled": True,
+            "blacklist_words": ["ТК РФ"],
+        },
+        headers=headers,
+    )
+    assert auto.status_code == 200, auto.text
+
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        task = await session.get(Task, uuid.UUID(auto.json()["task_id"]))
+        assert task.payload["blacklist_enabled"] is True
+        assert task.payload["blacklist_words"] == ["ТК РФ"]
+
+    group = await client.post(
+        "/api/v1/parsing/group",
+        json={
+            "search_url": "https://hh.ru/search/vacancy?text=python",
+            "blacklist_enabled": False,
+            "blacklist_words": ["ТК РФ"],
+        },
+        headers=headers,
+    )
+    assert group.status_code == 200, group.text
+
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        task = await session.get(Task, uuid.UUID(group.json()["task_id"]))
+        # Выключенный тумблер: слова в payload не сохраняются вовсе.
+        assert task.payload["blacklist_enabled"] is False
+        assert task.payload["blacklist_words"] == []

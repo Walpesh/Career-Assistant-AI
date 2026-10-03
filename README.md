@@ -53,7 +53,7 @@ python -m http.server 5500 --directory frontend
 cd backend
 python -m venv .venv
 .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r requirements.lock
 copy .env.example .env
 uvicorn app.main:app --reload --port 8000
 ```
@@ -78,9 +78,12 @@ python tools/ui_smoke_test.py
       «Анализ и Отклик» (статусы, match-теги, массовые действия, письма), реал-тайм журнал и прогресс-бары
 - [x] Кастомный компонент `Fadeout-action-popup` (рантайм-уведомления + fallback для WS-события `popup`)
 - [x] Auth Module: регистрация, вход, refresh-ротация, bcrypt, изоляция пользователей
-- [x] User Profile Module: профиль, частичное обновление, сокращение резюме через LLM (этап 0, docs/05 §3)
+- [x] User Profile Module: профиль, частичное обновление, сокращение резюме через LLM (этап 0, docs/05 §3),
+      «Предпочтения в анализах» (влияют на этап анализа) и «Хотите добавить информацию в конец резюме?»
+      (дописывается в письмо скриптовым методом)
 - [x] Vacancy Storage Module: список с фильтрами, ручной ингест hh.ru, граф статусов, дедупликация
-- [x] Parsing Orchestrator: автопоиск / групповой / ручной режимы, fallback chain, антибан-сессия
+- [x] Parsing Orchestrator: автопоиск / групповой / ручной режимы, fallback chain, антибан-сессия,
+      чёрный список слов с тумблером в автопоиске и групповом парсере (docs/04 §4.9)
 - [x] Queue Manager: единая очередь `tasks`, приоритеты, лимит 2 воркера на пользователя,
       отдельная строгая LLM-очередь (1 воркер)
 - [x] Analysis & Letter Module: LLM-анализ и генерация писем (docs/05 §4–§6, §9),

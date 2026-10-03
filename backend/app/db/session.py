@@ -11,7 +11,9 @@ from app.core.config import settings
 
 engine = create_async_engine(
     settings.database_url,
-    echo=settings.debug,
+    # echo только в debug и никогда в production — иначе в логи утекает DSN
+    # (см. Settings.db_echo).
+    echo=settings.db_echo,
     pool_pre_ping=True,
     pool_size=10,
     max_overflow=20,

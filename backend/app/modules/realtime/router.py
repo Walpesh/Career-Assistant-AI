@@ -1,6 +1,6 @@
 """Realtime & Notification Module — WebSocket-канал (docs/03_API_CONTRACTS.md §8).
 
-Подключение: /api/v1/ws?token=<access_token>
+Подключение: /api/v1/ws?ticket=<one-time-ticket> (или ?token=<access_token>)
 
 События сервер → клиент:
     task.created / task.progress / task.completed / task.failed
@@ -31,6 +31,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
 
 from app.modules.auth.security import TOKEN_TYPE_ACCESS, TokenError, decode_token
+from app.modules.auth.ws_tickets import consume_ws_ticket
 
 router = APIRouter(tags=["realtime"])
 
@@ -68,23 +69,34 @@ def _is_ping(message: str) -> bool:
     return isinstance(parsed, dict) and parsed.get("event") in ("ping", "ws.ping")
 
 
-@router.websocket("/ws")
-async def realtime_channel(websocket: WebSocket, token: str | None = None) -> None:
-    """Канал реал-тайм событий с аутентификацией по JWT."""
-    # Валидация токена (обязательна)
-    if not token:
-        await websocket.close(code=4401)  # 4401: Authentication error
-        return
+async def _resolve_user_id(ticket: str | None, token: str | None) -> str | None:
+    """user_id из одноразового тикета (приоритет) или из access-JWT (fallback).
 
-    try:
-        payload = decode_token(token, expected_type=TOKEN_TYPE_ACCESS)
-        user_id = str(payload.get("sub", ""))
-    except TokenError:
-        await websocket.close(code=4401)  # 4401: Authentication error
-        return
+    Тикет — основной путь (docs/03 §8): одноразовый, короткоживущий, хранится
+    в Redis. Сырой `token` в query поддерживается для обратной совместимости.
+    """
+    if ticket:
+        return await consume_ws_ticket(ticket)
+    if token:
+        try:
+            payload = decode_token(token, expected_type=TOKEN_TYPE_ACCESS)
+        except TokenError:
+            return None
+        return str(payload.get("sub") or "") or None
+    return None
+
+
+@router.websocket("/ws")
+async def realtime_channel(
+    websocket: WebSocket,
+    ticket: str | None = None,
+    token: str | None = None,
+) -> None:
+    """Канал реал-тайм событий с аутентификацией по одноразовому тикету."""
+    user_id = await _resolve_user_id(ticket, token)
 
     if not user_id:
-        await websocket.close(code=4401)
+        await websocket.close(code=4401)  # 4401: Authentication error
         return
 
     # Регистрируем соединение и запоминаем предыдущие (дубликаты вкладок).

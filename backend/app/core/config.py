@@ -2,7 +2,13 @@
 
 from functools import lru_cache
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+#: Значение JWT_SECRET по умолчанию, которое обязано быть изменено в production.
+INSECURE_JWT_SECRET = "change-me-in-production"
+#: Минимальная длина JWT-секрета в production (docs/03 §2 — HS256).
+MIN_JWT_SECRET_LENGTH = 32
 
 
 class Settings(BaseSettings):
@@ -15,9 +21,36 @@ class Settings(BaseSettings):
     app_version: str = "0.1.0"
     api_prefix: str = "/api/v1"
     debug: bool = False
+    #: Окружение: development | staging | production. В production включаются
+    #: строгие проверки секретов (fail-fast) и дополнительные security-заголовки.
+    environment: str = "development"
 
     # --- CORS ---
     cors_origins: str = "http://localhost:5500,http://127.0.0.1:5500"
+    #: Отправлять ли CORS-credentials (cookies). Wildcard '*' запрещён вместе с ним.
+    cors_allow_credentials: bool = True
+
+    # --- Trusted hosts (защита от Host-спуфинга) ---
+    trusted_hosts: str = "localhost,127.0.0.1,testserver"
+
+    # --- Security headers ---
+    #: Content-Security-Policy. По умолчанию совместим с текущим фронтендом
+    #: (Tailwind Play CDN + Google Fonts). В production политику можно ужесточить.
+    csp_policy: str = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "img-src 'self' data:; "
+        "connect-src 'self' ws: wss: http: https:; "
+        "object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+    )
+    gzip_min_size: int = 1024
+    #: Доверять ли X-Forwarded-For / X-Forwarded-Proto (за обратным прокси).
+    trust_proxy_headers: bool = False
+
+    # --- Rate limiting (Redis sliding-window) ---
+    rate_limit_enabled: bool = True
 
     # --- PostgreSQL (docs/02_DATABASE.md) ---
     database_url: str = "postgresql+asyncpg://career:career@localhost:5432/career_assistant"
@@ -30,6 +63,20 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 14
+
+    # --- Refresh-токены и cookies ---
+    #: Имя HttpOnly-cookie с refresh-токеном.
+    refresh_cookie_name: str = "ca_refresh_token"
+    #: Путь cookie (совпадает с api_prefix, чтобы не утекал на статику).
+    refresh_cookie_path: str = "/api/v1/auth"
+    #: Secure-флаг cookie: None → автоматически (только в production/https).
+    refresh_cookie_secure: bool | None = None
+    #: SameSite для refresh-cookie: strict | lax | none.
+    refresh_cookie_samesite: str = "strict"
+    #: Время жизни WS-тикета (одноразовый билет для WebSocket), сек.
+    ws_ticket_ttl_seconds: int = 30
+    #: Обнаружение повторного использования refresh-токена (revoke all при reuse).
+    refresh_token_reuse_detection: bool = True
 
     # --- Queue Manager: Redis + ARQ (docs/01 §3, docs/04 §6) ---
     # Очереди Redis. Задачи попадают в них через enqueue_job() при создании
@@ -54,8 +101,14 @@ class Settings(BaseSettings):
     queue_slot_wait_seconds: float = 300.0
     # При старте вернуть в очередь задачи, застрявшие в pending/processing.
     queue_recover_on_startup: bool = True
+    #: Redis-блокировка восстановления (SET NX EX), сек. Защищает
+    #: `recover_pending_tasks` от параллельного запуска несколькими
+    #: репликами API/worker-parsing при старте (production).
+    queue_recover_lock_ttl_seconds: int = 300
     # Поднимать ли ARQ-воркеры внутри процесса FastAPI (lifespan).
-    # False — воркеры запускаются отдельно: arq app.modules.queue_manager.worker:ParsingQueueSettings
+    # False — воркеры запускаются отдельно (worker_entry.py parsing|llm).
+    # В production встроенные воркеры ЗАПРЕЩЕНЫ (см. _validate_security):
+    # API и воркеры — независимые рантаймы (worker-parsing ×N, worker-llm ×1).
     queue_embedded_workers: bool = True
 
     # --- LLM (docs/05_LLM_PIPELINE.md) ---
@@ -80,6 +133,77 @@ class Settings(BaseSettings):
     def cors_origin_list(self) -> list[str]:
         """CORS-источники из строки через запятую."""
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def trusted_host_list(self) -> list[str]:
+        """Разрешённые Host-заголовки из строки через запятую."""
+        return [host.strip() for host in self.trusted_hosts.split(",") if host.strip()]
+
+    @property
+    def is_production(self) -> bool:
+        """Production-режим (строгие проверки секретов и hardening)."""
+        return self.environment.strip().lower() == "production"
+
+    @property
+    def db_echo(self) -> bool:
+        """SQL echo: только в debug и НИКОГДА в production (иначе DSN в логах)."""
+        return bool(self.debug) and not self.is_production
+
+    @property
+    def secure_cookies(self) -> bool:
+        """Secure-флаг cookies: явная настройка или автоматически в production."""
+        if self.refresh_cookie_secure is not None:
+            return self.refresh_cookie_secure
+        return self.is_production
+
+    @property
+    def effective_embedded_workers(self) -> bool:
+        """Флаг встроенных воркеров с учётом окружения.
+
+        В production встроенные воркеры запрещены (docs/01 §6): API и
+        воркеры — независимые рантаймы (`worker-parsing` ×N, `worker-llm` ×1),
+        поэтому метод всегда возвращает False независимо от значения
+        `queue_embedded_workers`.
+        """
+        if self.is_production:
+            return False
+        return bool(self.queue_embedded_workers)
+
+    @model_validator(mode="after")
+    def _validate_security(self) -> "Settings":
+        """Fail-fast проверки безопасности конфигурации.
+
+        - production не должен стартовать с дефолтным/коротким JWT_SECRET;
+        - CORS не должен разрешать wildcard '*' вместе с credentials=true.
+        - production не должен поднимать встроенные воркеры
+          (QUEUE_EMBEDDED_WORKERS=false): API и воркеры — независимые
+          рантаймы (worker-parsing ×N, worker-llm строго ×1, docs/01 §6).
+        """
+        if self.is_production:
+            if self.jwt_secret == INSECURE_JWT_SECRET:
+                raise ValueError(
+                    "ENVIRONMENT=production requires a non-default JWT_SECRET "
+                    "(set a strong, random value)"
+                )
+            if len(self.jwt_secret) < MIN_JWT_SECRET_LENGTH:
+                raise ValueError(
+                    f"ENVIRONMENT=production requires JWT_SECRET of at least "
+                    f"{MIN_JWT_SECRET_LENGTH} characters"
+                )
+            if self.queue_embedded_workers:
+                raise ValueError(
+                    "ENVIRONMENT=production requires QUEUE_EMBEDDED_WORKERS=false "
+                    "(run workers as separate runtimes: worker-parsing ×N, "
+                    "worker-llm strictly ×1)"
+                )
+
+        origins = self.cors_origin_list
+        if "*" in origins and self.cors_allow_credentials:
+            raise ValueError(
+                "CORS wildcard '*' cannot be combined with CORS_ALLOW_CREDENTIALS=true; "
+                "list explicit origins instead"
+            )
+        return self
 
 
 @lru_cache

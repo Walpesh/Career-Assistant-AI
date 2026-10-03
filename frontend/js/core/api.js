@@ -34,17 +34,12 @@ let refreshPromise = null;
  * @returns {Promise<boolean>} true — новый токен получен и сохранён.
  */
 function refreshAccessToken() {
-  if (!session.refreshToken) return Promise.resolve(false);
   if (!refreshPromise) {
-    refreshPromise = request(
-      'POST',
-      '/auth/refresh',
-      { refresh_token: session.refreshToken },
-      { skipAuth: true }
-    )
+    // Refresh-токен уходит автоматически в HttpOnly cookie (credentials: include).
+    refreshPromise = request('POST', '/auth/refresh', undefined, { skipAuth: true })
       .then((data) => {
         if (!data?.access_token) return false;
-        session.setTokens({ access_token: data.access_token, refresh_token: data.refresh_token });
+        session.setTokens({ access_token: data.access_token });
         return true;
       })
       .catch(() => false)
@@ -67,6 +62,7 @@ async function request(method, path, body, options = {}) {
     response = await fetch(`${CONFIG.API_BASE}${path}`, {
       method,
       headers,
+      credentials: 'include',
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: options.signal
     });
@@ -111,20 +107,25 @@ export const api = {
 
   login: async (email, password) => {
     const data = await request('POST', '/auth/login', { email, password }, { skipAuth: true });
-    // Поддерживаем оба варианта именования токена.
+    // В память кладём только access-токен; refresh уже в HttpOnly cookie.
     const access = data?.access_token || data?.token;
-    if (access) session.setTokens({ access_token: access, refresh_token: data?.refresh_token });
+    if (access) session.setTokens({ access_token: access });
     return data;
   },
 
   me: () => request('GET', '/auth/me'),
 
   refresh: async () => {
-    const data = await request('POST', '/auth/refresh', { refresh_token: session.refreshToken }, { skipAuth: true });
-    // Ротация: сохраняем новую пару токенов.
-    if (data?.access_token) session.setTokens({ access_token: data.access_token, refresh_token: data.refresh_token });
+    // Refresh-токен уходит автоматически в HttpOnly cookie.
+    const data = await request('POST', '/auth/refresh', undefined, { skipAuth: true });
+    // Ротация: сохраняем новый access-токен (новый refresh — тоже в cookie).
+    if (data?.access_token) session.setTokens({ access_token: data.access_token });
     return data;
   },
+
+  logout: () => request('POST', '/auth/logout', undefined, { skipAuth: true }),
+
+  wsTicket: () => request('POST', '/auth/ws-ticket'),
 
   /* --- Profile --- */
   getProfile: () => request('GET', '/profile'),
@@ -151,5 +152,6 @@ export const api = {
   /* --- Tasks --- */
   listTasks: () => request('GET', '/tasks'),
   getTask: (id) => request('GET', `/tasks/${encodeURIComponent(id)}`),
-  cancelTask: (id) => request('POST', `/tasks/${encodeURIComponent(id)}/cancel`)
+  cancelTask: (id) => request('POST', `/tasks/${encodeURIComponent(id)}/cancel`),
+  resumeTask: (id) => request('POST', `/tasks/${encodeURIComponent(id)}/resume`)
 };

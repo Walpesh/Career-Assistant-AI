@@ -13,6 +13,7 @@ JWT payload (docs/03 фиксирует только Bearer-схему и refres
 
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from uuid import uuid4
@@ -31,6 +32,7 @@ __all__ = [
     "create_access_token",
     "create_refresh_token",
     "decode_token",
+    "hash_token",
     "TokenError",
     "TOKEN_TYPE_ACCESS",
     "TOKEN_TYPE_REFRESH",
@@ -101,3 +103,8 @@ def decode_token(token: str, expected_type: str) -> dict:
     if not payload.get("sub"):
         raise TokenError("В токене отсутствует subject (user id)")
     return payload
+
+
+def hash_token(token: str) -> str:
+    """SHA-256 хэш токена (hex) — в БД хранится только он, не сам JWT."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()

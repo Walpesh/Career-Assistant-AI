@@ -35,9 +35,10 @@ __all__ = [
     "extract_hh_vacancy_id",
     "get_user_vacancy",
     "upsert_vacancy",
+    "delete_vacancy",
+    "delete_vacancy_by_hh_id",
     "list_user_vacancies",
     "change_status",
-    "delete_vacancy",
 ]
 
 VACANCY_STATUSES: tuple[str, ...] = (
@@ -253,3 +254,25 @@ async def delete_vacancy(db: AsyncSession, vacancy: Vacancy) -> None:
     """Физическое удаление вакансии (мягкого удаления нет — docs/02 §1)."""
     await db.delete(vacancy)
     await db.commit()
+
+
+async def delete_vacancy_by_hh_id(
+    db: AsyncSession, user_id: uuid.UUID, hh_vacancy_id: str
+) -> bool:
+    """Удалить вакансию пользователя по hh_vacancy_id; True — была удалена.
+
+    Используется чёрным списком слов (docs/04 §4.9): вакансия, не прошедшая
+    фильтр, не должна оставаться в БД, даже если она была сохранена ранее.
+    Каскадные связи (analyses, cover_letters) удаляются вместе с записью.
+    """
+    existing = await db.scalar(
+        select(Vacancy).where(
+            Vacancy.user_id == user_id,
+            Vacancy.hh_vacancy_id == hh_vacancy_id,
+        )
+    )
+    if existing is None:
+        return False
+    await db.delete(existing)
+    await db.commit()
+    return True

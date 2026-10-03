@@ -26,7 +26,9 @@ SELECT'ов к ней нет вообще.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import signal
 import uuid
 from datetime import datetime, timezone
 
@@ -60,9 +62,60 @@ __all__ = [
     "run_llm_task",
     "ParsingQueueSettings",
     "LLMQueueSettings",
+    "install_signal_handlers",
 ]
 
 logger = logging.getLogger(__name__)
+
+#: Флаг graceful shutdown: выставляется обработчиком SIGTERM/SIGINT.
+#: Воркер перестаёт брать новые job'ы, активные — завершаются или
+#: откладываются (Retry/defer) до остановки пода (Kubernetes `preStop`).
+_shutdown_requested = asyncio.Event()
+
+
+def install_signal_handlers() -> None:
+    """Установить обработчики SIGTERM/SIGINT для worker-процесса.
+
+    Вызывается в standalone worker entrypoint (`backend/worker_entry.py`):
+    при получении SIGTERM/SIGINT выставляется `_shutdown_requested`,
+    ARQ-воркер (handle_signals=True) завершает активные job'ы и выходит.
+    В dev/встроенных воркерах не вызывается — сигналы ведёт uvicorn.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+
+    def _request_shutdown(signum: int, _frame: object) -> None:
+        logger.info(
+            "Queue Manager: получен сигнал %s — graceful shutdown, "
+            "новые job'ы не берутся, активные завершаются",
+            signal.Signals(signum).name,
+        )
+        loop.call_soon_threadsafe(_shutdown_requested.set)
+
+    for signame in ("SIGTERM", "SIGINT"):
+        sig = getattr(signal, signame, None)
+        if sig is None:
+            continue
+        try:
+            loop.add_signal_handler(sig, _request_shutdown, int(sig), None)
+        except (NotImplementedError, RuntimeError, ValueError):
+            # Windows / тестовый loop без поддержки сигналов — пропускаем.
+            try:
+                signal.signal(sig, _request_shutdown)  # type: ignore[arg-type]
+            except (OSError, RuntimeError, ValueError):
+                logger.debug("Queue Manager: сигнал %s не перехвачен", signame)
+
+
+def is_shutdown_requested() -> bool:
+    """Запрошена ли остановка worker-процесса (SIGTERM/SIGINT)."""
+    return _shutdown_requested.is_set()
+
+
+def reset_shutdown_flag() -> None:
+    """Сбросить флаг остановки (используется в тестах)."""
+    _shutdown_requested.clear()
 
 
 class TaskProgressReporter(ProgressReporter):
@@ -85,6 +138,10 @@ class TaskProgressReporter(ProgressReporter):
     ) -> None:
         self._task.progress_current = max(0, int(current))
         self._task.progress_total = max(0, int(total))
+        # Этап/сообщение тоже сохраняются в БД: после перезагрузки страницы
+        # GET /tasks отдаёт актуальный прогресс до нового события task.progress.
+        self._task.progress_stage = str(stage or "")[:32] or None
+        self._task.progress_message = message
         await self._session.commit()
         await publish_event(
             str(self._task.user_id),
@@ -184,8 +241,15 @@ async def _start_task(session: AsyncSession, task: Task) -> bool:
     return True
 
 
-async def _finish_completed(session: AsyncSession, task: Task, result: dict) -> None:
-    """pending → processing → completed (docs/02 §3.6, docs/03 §8)."""
+async def _finish_completed(session: AsyncSession, task: Task, result: dict) -> bool:
+    """pending → processing → completed (docs/02 §3.6, docs/03 §8).
+
+    Returns False, если задача уже финализирована (например, отменена
+    пользователем, пока воркер работал) — терминальный статус не перетирается.
+    """
+    if task.finished_at is not None:
+        logger.info("Задача %s уже финализирована — completed не применяется", task.id)
+        return False
     task.status = "completed"
     task.result = result
     task.finished_at = datetime.now(timezone.utc)
@@ -196,6 +260,7 @@ async def _finish_completed(session: AsyncSession, task: Task, result: dict) -> 
         "task.completed",
         {"task_id": str(task.id), "result": result},
     )
+    return True
 
 
 async def _finish_failed(
@@ -206,6 +271,9 @@ async def _finish_failed(
     popup: dict | None = None,
 ) -> None:
     """pending → processing → failed + уведомление (docs/03 §8)."""
+    if task.finished_at is not None:
+        logger.info("Задача %s уже финализирована — failed не применяется", task.id)
+        return
     task.status = "failed"
     task.error_message = error_message
     task.finished_at = datetime.now(timezone.utc)
@@ -214,6 +282,41 @@ async def _finish_failed(
         str(task.user_id),
         "task.failed",
         {"task_id": str(task.id), "error": error_message},
+    )
+    if popup:
+        await publish_event(str(task.user_id), "popup", popup)
+
+
+async def _finish_waiting_captcha(
+    session: AsyncSession,
+    task: Task,
+    error_message: str,
+    *,
+    status: str = "waiting_captcha",
+    popup: dict | None = None,
+) -> None:
+    """Капча → ``waiting_captcha`` (docs/04 §2 п.3, §5).
+
+    Задача **не** завершается: ``finished_at`` не проставляется, слот уже
+    освобождён вызывающим кодом — после ручного прохождения капчи её вернёт
+    в очередь ``POST /tasks/{id}/resume``.
+    """
+    if task.finished_at is not None:
+        logger.info("Задача %s уже финализирована — waiting_captcha не применяется", task.id)
+        return
+    task.status = status
+    task.error_message = error_message
+    await session.commit()
+    # Событие task.failed с полем status (docs/03 §8): фронтенд сразу показывает
+    # статус waiting_captcha вместо «Ошибка».
+    await publish_event(
+        str(task.user_id),
+        "task.failed",
+        {
+            "task_id": str(task.id),
+            "error": error_message,
+            "status": "waiting_captcha",
+        },
     )
     if popup:
         await publish_event(str(task.user_id), "popup", popup)
@@ -261,19 +364,25 @@ async def _execute_parsing(session: AsyncSession, task: Task) -> dict:
     try:
         outcome = await _dispatch_parsing(session, task, reporter)
     except CaptchaDetected as exc:
-        # docs/04 §5: капча → остановка задачи, уведомление пользователя.
-        await _finish_failed(
+        # docs/04 §2 п.3, §5: капча → waiting_captcha (пауза под ручное
+        # вмешательство), а не failed — задачу вернёт /tasks/{id}/resume.
+        status = getattr(exc, "task_status", None) or "waiting_captcha"
+        message = (
+            f"Обнаружена капча hh.ru: {exc}. Требуется ручное вмешательство "
+            f"(docs/04 §2 п.3)"
+        )
+        await _finish_waiting_captcha(
             session,
             task,
-            f"Обнаружена капча hh.ru: {exc}. Требуется ручное вмешательство "
-            f"(docs/04 §2 п.3)",
+            message,
+            status=status,
             popup={
                 "type": "warning",
                 "title": "Капча hh.ru",
                 "message": "Парсинг остановлен: требуется ручное вмешательство",
             },
         )
-        return {"failed": 1, "error": "captcha"}
+        return {"failed": 1, "error": "captcha", "status": task.status}
     except RateLimitExceeded as exc:
         # docs/04 §5: 429 после retry → задача не выполнена (retry исчерпан).
         await _finish_failed(session, task, f"Превышен лимит запросов hh.ru: {exc}")
@@ -291,15 +400,83 @@ async def _execute_parsing(session: AsyncSession, task: Task) -> dict:
     return result
 
 
+async def _maybe_enqueue_analysis(
+    session: AsyncSession, task: Task, outcome
+) -> None:
+    """run_analysis из ``_dispatch_parsing`` (docs/04 §4.3).
+
+    Payload ``run_analysis`` приходит в POST /parsing/manual; если он включён и
+    вакансии реально собраны, в LLM-очередь ставится задача типа ``analyze``
+    (mode = analyze, docs/03 §6). Сбой постановки не должен отменять успешный
+    парсинг — задача помечается failed, основная задача завершается штатно.
+    """
+    from app.db.models import Task as TaskModel
+    from app.modules.queue_manager.queues import QueueUnavailable, enqueue_task
+
+    payload = task.payload or {}
+    if task.task_type != "parse_manual" or not payload.get("run_analysis"):
+        return
+    vacancy_ids = [str(item) for item in (outcome.vacancy_ids or [])]
+    if not vacancy_ids:
+        return
+
+    analysis_task = TaskModel(
+        user_id=task.user_id,
+        task_type="analyze",
+        status="pending",
+        progress_current=0,
+        progress_total=len(vacancy_ids),
+        payload={"vacancy_ids": vacancy_ids, "mode": "analyze"},
+    )
+    session.add(analysis_task)
+    await session.commit()
+    await session.refresh(analysis_task)
+
+    try:
+        await enqueue_task(analysis_task.id, analysis_task.task_type)
+    except QueueUnavailable as exc:
+        logger.warning(
+            "Задача %s (analyze) не поставлена в очередь: %s", analysis_task.id, exc
+        )
+        analysis_task.status = "failed"
+        analysis_task.error_message = f"Очередь задач недоступна: {exc}"
+        analysis_task.finished_at = datetime.now(timezone.utc)
+        await session.commit()
+        return
+
+    await publish_event(
+        str(task.user_id),
+        "task.created",
+        {
+            "task_id": str(analysis_task.id),
+            "task_type": analysis_task.task_type,
+            "status": analysis_task.status,
+        },
+    )
+    logger.info(
+        "Задача %s: run_analysis → поставлена задача analyze %s",
+        task.id,
+        analysis_task.id,
+    )
+
+
 async def _dispatch_parsing(
     session: AsyncSession, task: Task, reporter: ProgressReporter
 ):
     """Маршрутизация задачи в нужный режим оркестратора (docs/04 §4)."""
-    from app.modules.parsing.service import ParsingOrchestrator
+    from app.modules.parsing.service import ParsingOrchestrator, normalize_blacklist
     from app.modules.vacancy_storage.service import extract_hh_vacancy_id
 
     payload = task.payload or {}
     orchestrator = ParsingOrchestrator()
+
+    # Чёрный список слов (docs/04 §4.9): работает только при включённом тумблере.
+    # Выключенный тумблер → пустой список → вакансии обрабатываются по-старому.
+    blacklist = (
+        normalize_blacklist(payload.get("blacklist_words"))
+        if payload.get("blacklist_enabled")
+        else []
+    )
 
     if task.task_type == "parse_auto":
         return await orchestrator.run_auto(
@@ -311,6 +488,7 @@ async def _dispatch_parsing(
             schedules=list(payload.get("schedules") or []),
             max_pages=int(payload.get("max_pages") or 5),
             progress=reporter,
+            blacklist=blacklist,
         )
 
     if task.task_type == "parse_group":
@@ -320,17 +498,23 @@ async def _dispatch_parsing(
             search_url=str(payload.get("search_url") or ""),
             max_pages=int(payload.get("max_pages") or 5),
             progress=reporter,
+            blacklist=blacklist,
         )
 
     if task.task_type == "parse_manual":
         vacancy_url = str(payload.get("vacancy_url") or "")
-        return await orchestrator.run_manual(
+        outcome = await orchestrator.run_manual(
             session,
             user_id=task.user_id,
             vacancy_url=vacancy_url,
             hh_vacancy_id=extract_hh_vacancy_id(vacancy_url),
             progress=reporter,
+            blacklist=blacklist,
         )
+        # run_analysis (docs/04 §4.3): «сохранение + опциональный запуск
+        # анализа» — после сбора вакансий ставится LLM-задача analyze.
+        await _maybe_enqueue_analysis(session, task, outcome)
+        return outcome
 
     raise ValueError(f"Неизвестный тип задачи парсинга: {task.task_type}")
 
@@ -341,6 +525,9 @@ async def _llm_progress(
     """Прогресс LLM-задачи → БД + Realtime (docs/03 §8, task.progress)."""
     task.progress_current = max(0, int(current))
     task.progress_total = max(0, int(total))
+    # Этап/сообщение сохраняются в БД — переживают перезагрузку страницы.
+    task.progress_stage = "llm"
+    task.progress_message = message
     await session.commit()
     await publish_event(
         str(task.user_id),
@@ -529,14 +716,58 @@ async def _run_convert_resume(session: AsyncSession, task: Task) -> dict:
 # --- ARQ WorkerSettings (запуск воркеров отдельными процессами) ------------
 # docs/01 §6: парсинг масштабируется горизонтально, LLM — строго один процесс.
 #
+# Production (docker-compose.yml):
+#   worker-parsing: масштабируется до N реплик (deploy.replicas / --scale)
+#   worker-llm:     СТРОГО 1 реплика (deploy.replicas: 1 + restart policy)
+# API в production встроенных воркеров НЕ поднимает
+# (Settings._validate_security требует QUEUE_EMBEDDED_WORKERS=false).
+#
 #   arq app.modules.queue_manager.worker:ParsingQueueSettings
 #   arq app.modules.queue_manager.worker:LLMQueueSettings
+
+
+async def _on_worker_startup(ctx: dict) -> None:
+    """Startup-хук ARQ-воркера: фабрика сессий + восстановление задач.
+
+    `recover_pending_tasks` защищён Redis-блокировкой SET NX EX
+    (см. queues.acquire_recover_lock): при старте N реплик восстановление
+    выполняет только один процесс, остальные пропускают без дублей.
+    """
+    from app.db.session import AsyncSessionLocal
+    from app.modules.queue_manager.queues import recover_pending_tasks
+
+    ctx.setdefault("session_factory", AsyncSessionLocal)
+    try:
+        restored = await recover_pending_tasks(AsyncSessionLocal)
+    except Exception:  # noqa: BLE001 — воркер должен стартовать в любом случае
+        logger.exception("Queue Manager: worker startup — не удалось восстановить задачи")
+    else:
+        logger.info("Queue Manager: worker startup — восстановлено задач: %d", restored)
+
+
+async def _on_worker_shutdown(ctx: dict) -> None:
+    """Shutdown-хук ARQ-воркера: активные job'ы уже завершены/deferred ARQ.
+
+    ARQ при SIGTERM/SIGINT перестаёт брать новые job'ы и ждёт завершения
+    активных (graceful shutdown из коробки: handle_signals=True в отдельных
+    процессах). Хук фиксирует остановку в логах; слоты Redis освобождаются
+    в finally-обёртках run_*_task, залипшие — по TTL (queue_slot_ttl_seconds).
+    """
+    _ = ctx
+    logger.info("Queue Manager: worker shutdown — активные job'ы завершены")
 
 
 class _QueueWorkerSettingsBase:
     """Общая часть настроек воркера: очередь, Redis, таймауты."""
 
     queue_name: str = PARSING_QUEUE
+    # Graceful shutdown: SIGTERM/SIGINT обрабатывает сам ARQ-воркер
+    # (handle_signals=True): новые job'ы не берутся, активные — завершаются
+    # или откладываются (Retry/defer) до остановки пода. Во встроенных
+    # воркерах (dev, lifespan FastAPI) сигналы ведёт uvicorn (False).
+    handle_signals: bool = True
+    on_startup = _on_worker_startup
+    on_shutdown = _on_worker_shutdown
 
     @staticmethod
     def _common() -> dict:
@@ -547,6 +778,9 @@ class _QueueWorkerSettingsBase:
             "job_timeout": settings.arq_job_timeout_seconds,
             "max_tries": settings.arq_max_tries,
             "poll_delay": settings.arq_poll_delay_seconds,
+            "handle_signals": True,
+            "on_startup": _on_worker_startup,
+            "on_shutdown": _on_worker_shutdown,
         }
 
     def __init__(self) -> None:
@@ -557,6 +791,9 @@ class _QueueWorkerSettingsBase:
         self.job_timeout = common["job_timeout"]
         self.max_tries = common["max_tries"]
         self.poll_delay = common["poll_delay"]
+        self.handle_signals = common["handle_signals"]
+        self.on_startup = common["on_startup"]
+        self.on_shutdown = common["on_shutdown"]
         self.max_jobs = settings.arq_parsing_max_jobs
 
     @classmethod
@@ -571,6 +808,9 @@ class _QueueWorkerSettingsBase:
             "job_timeout": instance.job_timeout,
             "max_tries": instance.max_tries,
             "poll_delay": instance.poll_delay,
+            "handle_signals": instance.handle_signals,
+            "on_startup": instance.on_startup,
+            "on_shutdown": instance.on_shutdown,
         }
 
 

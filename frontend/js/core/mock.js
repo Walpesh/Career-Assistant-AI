@@ -53,6 +53,8 @@ let PROFILE = {
   desired_salary_to: 250000,
   match_threshold: 75,
   preferred_work_formats: ['remote', 'hybrid'],
+  analysis_preferences: 'Не хочу трудоустройство по ТК РФ. Нужен удалённый формат. Готов к переезду только в Санкт-Петербург.',
+  resume_addition: 'Готов обсудить условия и приехать на собеседование в удобное время.',
   created_at: daysAgo(40),
   updated_at: daysAgo(2)
 };
@@ -190,8 +192,21 @@ const ANALYSES = {
 
 /* ---------- Сопроводительные письма (docs/02 §3.5) ---------- */
 
+/**
+ * Текст «Хотите добавить информацию в конец резюме?» дописывается в конец
+ * письма «с красной строки» — скриптовым методом, как в backend
+ * (analysis_letter/llm.append_resume_addition).
+ */
+function appendResumeAddition(letter, addition) {
+  const extra = String(addition || '').trim();
+  if (!extra) return letter;
+  const body = String(letter || '').trimEnd();
+  if (body.endsWith(extra)) return body;
+  return body ? `${body}\n\n${extra}` : extra;
+}
+
 function buildLetter(title, company) {
-  return [
+  const base = [
     'Здравствуйте! Меня зовут Иван, я Python-разработчик с 4.5 годами опыта в backend-разработке и автоматизации.',
     '',
     `Вакансия «${title}» в компании ${company} совпадает с моим профилем: последние два года я проектировал REST API на FastAPI, работал с PostgreSQL и Redis, строил ETL-пайплайны и внедрял LLM-инструменты в рабочие процессы. В одном из проектов сократил время обработки заявок на 65% за счёт перехода на асинхронные микросервисы.`,
@@ -203,6 +218,7 @@ function buildLetter(title, company) {
     '',
     'Готов обсудить задачи команды и показать примеры кода на созвоне. Удобно созвониться на этой неделе?'
   ].join('\n');
+  return appendResumeAddition(base, PROFILE.resume_addition);
 }
 
 const LETTERS = {
@@ -287,7 +303,7 @@ function addVacancy(patch = {}) {
   return vacancy;
 }
 
-async function simulateParse(task, { source = 'auto', keywords = [], vacancyUrl = null, runAnalysis = false }) {
+async function simulateParse(task, { source = 'auto', keywords = [], vacancyUrl = null, runAnalysis = false, blacklist = null }) {
   await sleep(250);
   const total = vacancyUrl ? 2 : Math.min(10, 4 + Math.max(1, keywords.length));
 
@@ -297,22 +313,45 @@ async function simulateParse(task, { source = 'auto', keywords = [], vacancyUrl 
   }
 
   const created = [];
+  let skipped = 0;
+  // Чёрный список слов (docs/04 §4.9): работает только при включённом тумблере.
+  const blocked = blacklist && blacklist.enabled
+    ? (blacklist.words || []).map((w) => String(w).trim().toLowerCase()).filter(Boolean)
+    : [];
+  const isBlocked = (vacancy) => blocked.some((word) =>
+    [vacancy.title, vacancy.company_name, vacancy.description_raw]
+      .filter(Boolean)
+      .some((part) => String(part).toLowerCase().includes(word))
+  );
+
   if (vacancyUrl) {
     const hhId = (vacancyUrl.match(/vacancy\/(\d+)/) || [])[1] || '136000000';
-    created.push(addVacancy({ title: `Вакансия hh.ru №${hhId}`, company_name: 'Компания с hh.ru', source: 'manual', url: vacancyUrl, hh_vacancy_id: hhId }));
+    const vacancy = {
+      title: `Вакансия hh.ru №${hhId}`,
+      company_name: 'Компания с hh.ru',
+      source: 'manual',
+      url: vacancyUrl,
+      hh_vacancy_id: hhId
+    };
+    if (isBlocked(vacancy)) skipped += 1;
+    else created.push(addVacancy(vacancy));
   } else {
     const slots = source === 'group' ? 2 : 1;
     for (let i = 0; i < slots && poolIndex < PARSE_POOL.length; i += 1) {
       const [title, company, from, to, format] = PARSE_POOL[poolIndex];
       poolIndex += 1;
-      created.push(addVacancy({ title, company_name: company, salary_from: from, salary_to: to, work_format: format, source }));
+      const vacancy = { title, company_name: company, salary_from: from, salary_to: to, work_format: format, source };
+      if (isBlocked(vacancy)) skipped += 1;
+      else created.push(addVacancy(vacancy));
     }
   }
 
   await finishTask(
     task,
-    { found: created.length, saved: created.length, vacancy_ids: created.map((v) => v.id) },
-    { type: 'success', title: 'Парсинг завершён', message: `Сохранено вакансий: ${created.length}` }
+    { found: created.length + skipped, saved: created.length, blacklisted: skipped, vacancy_ids: created.map((v) => v.id) },
+    skipped
+      ? { type: 'warning', title: 'Парсинг завершён', message: `Сохранено: ${created.length}, отсечено чёрным списком: ${skipped}` }
+      : { type: 'success', title: 'Парсинг завершён', message: `Сохранено вакансий: ${created.length}` }
   );
 
   if (runAnalysis && created[0]) {
@@ -448,6 +487,10 @@ export function installMock() {
 
   api.refresh = async () => ({ access_token: 'demo-access-token' });
 
+  api.logout = async () => ({ revoked: true });
+
+  api.wsTicket = async () => ({ ticket: 'demo-ws-ticket', expires_in: 30 });
+
   /* Profile */
   api.getProfile = async () => {
     await sleep(200);
@@ -471,14 +514,21 @@ export function installMock() {
   api.parseAuto = async (payload = {}) => {
     await sleep(250);
     const task = makeTask('parse_auto', payload);
-    simulateParse(task, { source: 'auto', keywords: payload.keywords || [] });
+    simulateParse(task, {
+      source: 'auto',
+      keywords: payload.keywords || [],
+      blacklist: { enabled: Boolean(payload.blacklist_enabled), words: payload.blacklist_words || [] }
+    });
     return { task_id: task.id, status: 'pending' };
   };
 
   api.parseGroup = async (payload = {}) => {
     await sleep(250);
     const task = makeTask('parse_group', payload);
-    simulateParse(task, { source: 'group' });
+    simulateParse(task, {
+      source: 'group',
+      blacklist: { enabled: Boolean(payload.blacklist_enabled), words: payload.blacklist_words || [] }
+    });
     return { task_id: task.id, status: 'pending' };
   };
 
@@ -582,8 +632,23 @@ export function installMock() {
       task.status = 'failed';
       task.error_message = 'Отменено пользователем';
       task.finished_at = new Date().toISOString();
+      emitWs('task.cancelled', { task_id: task.id, status: 'failed', error: 'Отменено пользователем' });
       emitWs('task.failed', { task_id: task.id, error: 'Отменено пользователем' });
     }
     return { ...task };
+  };
+
+  api.resumeTask = async (id) => {
+    await sleep(200);
+    const task = TASKS.find((entry) => entry.id === id);
+    if (!task) throw new ApiError(404, 'Задача не найдена', 'NOT_FOUND');
+    if (task.status !== 'waiting_captcha') {
+      throw new ApiError(409, 'Возобновить можно только waiting_captcha', 'TASK_NOT_WAITING_CAPTCHA');
+    }
+    task.status = 'pending';
+    task.error_message = null;
+    task.finished_at = null;
+    emitWs('task.resumed', { task_id: task.id, status: 'pending' });
+    return { task_id: task.id, status: 'pending', resumed: true };
   };
 }

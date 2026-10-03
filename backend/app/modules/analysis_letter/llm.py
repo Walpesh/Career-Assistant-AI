@@ -32,9 +32,13 @@ __all__ = [
     "AnalysisResult",
     "analyze_vacancy",
     "generate_cover_letter",
+    "append_resume_addition",
+    "build_preferences_block",
     "ANALYSIS_PROMPT_TEMPLATE",
     "LETTER_PROMPT_TEMPLATE",
     "MAX_JSON_ATTEMPTS",
+    "MAX_PREFERENCES_CHARS",
+    "MAX_RESUME_ADDITION_CHARS",
 ]
 
 #: docs/05 §7: невалидный JSON → повторный запрос до 2 раз (всего 3 попытки).
@@ -42,6 +46,12 @@ MAX_JSON_ATTEMPTS = 3
 
 #: docs/05 §7: «Слишком длинный контекст → усечённое описание вакансии».
 MAX_DESCRIPTION_CHARS = 4000
+
+#: docs/05 §4: сколько символов пожеланий кандидата уходит в промпт анализа.
+MAX_PREFERENCES_CHARS = 2000
+
+#: docs/05 §5: лимит дописываемого в конец письма текста (resume_addition).
+MAX_RESUME_ADDITION_CHARS = 2000
 
 #: docs/05 §5: требуемый объём сопроводительного письма, символы.
 LETTER_MIN_CHARS = 1200
@@ -61,7 +71,7 @@ ANALYSIS_PROMPT_TEMPLATE = """Ты — строгий и объективный 
 Данные кандидата (compact resume):
 {compact_resume}
 
-Данные вакансии:
+{preferences_block}Данные вакансии:
 Название: {title}
 Компания: {company_name}
 Опыт: {experience}
@@ -201,6 +211,26 @@ def _vacancy_block(vacancy_fields: dict[str, Any]) -> dict[str, str]:
     }
 
 
+def build_preferences_block(preferences: Any) -> str:
+    """Блок «Предпочтения кандидата» для промпта анализа (docs/05 §4).
+
+    Поле `user_profiles.analysis_preferences` — свободный текст на человеческом
+    языке («не хочу трудоустройство по ТК РФ»). Он попадает в промпт без
+    изменений: модель сама решает, противоречит ли вакансия пожеланиям.
+    Пустое поле → пустой блок, промпт выглядит как раньше.
+    """
+    text = str(preferences or "").strip()
+    if not text:
+        return ""
+    if len(text) > MAX_PREFERENCES_CHARS:
+        text = text[:MAX_PREFERENCES_CHARS]
+    return (
+        "Предпочтения кандидата (учитывай их при оценке: если вакансия им "
+        "противоречит — отрази это в weaknesses и снизи match_score):\n"
+        f"{text}\n\n"
+    )
+
+
 def _extract_json(text: str) -> dict[str, Any]:
     """Достать JSON-объект из ответа модели (терпимо к ```-обёрткам)."""
     cleaned = text.strip()
@@ -251,7 +281,13 @@ async def analyze_vacancy(
         raise LLMError("Пустое compact_resume — сначала выполните сокращение резюме")
 
     block = _vacancy_block(vacancy_fields)
-    base_prompt = ANALYSIS_PROMPT_TEMPLATE.format(compact_resume=compact_resume.strip(), **block)
+    base_prompt = ANALYSIS_PROMPT_TEMPLATE.format(
+        compact_resume=compact_resume.strip(),
+        preferences_block=build_preferences_block(
+            vacancy_fields.get("analysis_preferences")
+        ),
+        **block,
+    )
 
     last_error: Exception | None = None
     for attempt in range(1, MAX_JSON_ATTEMPTS + 1):
@@ -339,3 +375,33 @@ async def generate_cover_letter(
     if len(letter) < 200:
         raise LLMError(f"Модель вернула слишком короткое письмо ({len(letter)} символов)")
     return letter
+
+
+# ------------------------------------------------------- дописывание «красной строки»
+def append_resume_addition(
+    letter: str,
+    addition: Any,
+    *,
+    max_chars: int = MAX_RESUME_ADDITION_CHARS,
+) -> str:
+    """Дописать текст из профиля в конец письма «с красной строки».
+
+    Это скриптовый метод: LLM здесь не участвует, текст добавляется дословно.
+    Используется в самом конце обработки вакансии (docs/05 §5, §6): если поле
+    «Хотите добавить информацию в конец резюме?» непустое, текст вставляется
+    после письма, отделённый пустой строкой. Пустое поле → письмо без изменений.
+    """
+    extra = str(addition or "").strip()
+    if not extra:
+        return letter
+
+    body = str(letter or "").rstrip()
+    if len(extra) > max_chars:
+        extra = extra[:max_chars].rstrip()
+
+    # Не дублируем, если пользователь добавил этот текст повторно
+    # (генерация письма может быть запущена несколько раз).
+    if body.endswith(extra):
+        return body
+
+    return f"{body}\n\n{extra}" if body else extra

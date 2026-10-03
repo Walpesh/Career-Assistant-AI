@@ -112,6 +112,16 @@ async def _clean_tables(engine):
         await conn.execute(text("TRUNCATE TABLE users RESTART IDENTITY CASCADE"))
 
 
+@pytest.fixture(autouse=True)
+def _disable_rate_limit(monkeypatch):
+    """По умолчанию лимиты выключены, чтобы не пересекаться между тестами.
+
+    Реальный лимитер тестируется отдельно (tests/test_security.py), где он
+    включается явно и использует реальный Redis.
+    """
+    monkeypatch.setattr(settings, "rate_limit_enabled", False, raising=False)
+
+
 # --- очередь задач: ARQ без Redis ----------------------------------------
 
 

@@ -7,6 +7,7 @@
 import { api } from '../core/api.js';
 import { on } from '../core/bus.js';
 import { getState, subscribe, getMatchThreshold, setMatchThreshold } from '../core/state.js';
+import { CONFIG } from '../config.js';
 import { loadPartial } from '../core/partials.js';
 import { popup } from '../components/fadeout-action-popup.js';
 import { TagInput } from '../components/tag-input.js';
@@ -21,6 +22,7 @@ const HH_VACANCY_URL = /^https?:\/\/([\w-]+\.)*hh\.ru\/vacancy\/\d+/i;
 
 let els = {};
 let keywordsInput = null;
+const blacklistInputs = new Map();
 let mounted = false;
 const cardMap = new Map();
 
@@ -53,6 +55,11 @@ export async function mount() {
     placeholder: els.keywords.dataset.placeholder,
     max: 30
   });
+
+  // Чёрный список слов — свой TagInput + тумблер для каждого режима
+  // (Автопоиск и Групповой парсер, docs/04 §4.9).
+  setupBlacklist('auto', 'auto-blacklist-enabled', 'auto-blacklist-words');
+  setupBlacklist('group', 'group-blacklist-enabled', 'group-blacklist-words');
 
   els.modeButtons.forEach((button) => button.addEventListener('click', () => setMode(button.dataset.mode)));
   setMode('auto');
@@ -106,6 +113,50 @@ function chipValues(group) {
   return [...document.querySelectorAll(`[data-chip-group="${group}"] input:checked`)].map((input) => input.value);
 }
 
+/* ---------- Чёрный список слов (docs/04 §4.9) ---------- */
+
+/**
+ * Подключить тумблер и поле слов для одного режима парсинга.
+ * Выключенный тумблер блокирует ввод слов и помечает поле как disabled —
+ * так видно, что фильтр не применяется.
+ */
+function setupBlacklist(mode, toggleId, wordsId) {
+  const toggle = document.getElementById(toggleId);
+  const container = document.getElementById(wordsId);
+  if (!toggle || !container) return;
+
+  const words = new TagInput(container, {
+    placeholder: container.dataset.placeholder,
+    max: CONFIG.MAX_BLACKLIST_WORDS
+  });
+
+  blacklistInputs.set(mode, { toggle, words });
+  syncBlacklistState(mode);
+
+  toggle.addEventListener('change', () => syncBlacklistState(mode));
+}
+
+function syncBlacklistState(mode) {
+  const entry = blacklistInputs.get(mode);
+  if (!entry) return;
+  const enabled = entry.toggle.checked;
+  entry.words.root.classList.toggle('opacity-50', !enabled);
+  entry.words.input.disabled = !enabled;
+  if (!enabled) entry.words.input.value = '';
+}
+
+/** Поля чёрного списка для запроса; выключенный тумблер → пустые слова. */
+function blacklistPayload(mode) {
+  const entry = blacklistInputs.get(mode);
+  if (!entry || !entry.toggle.checked) {
+    return { blacklist_enabled: false, blacklist_words: [] };
+  }
+  return {
+    blacklist_enabled: true,
+    blacklist_words: entry.words.getValues().map((word) => word.trim()).filter(Boolean)
+  };
+}
+
 /* ---------- Запуск режимов ---------- */
 
 async function submitAuto() {
@@ -118,7 +169,8 @@ async function submitAuto() {
   const payload = {
     keywords,
     match_threshold: clamp(getMatchThreshold(), 0, 100),
-    max_pages: clamp(Number(els.autoMaxPages.value) || 3, 1, 10)
+    max_pages: clamp(Number(els.autoMaxPages.value) || 3, 1, 10),
+    ...blacklistPayload('auto')
   };
   const employment = chipValues('employment');
   const formats = chipValues('work_format');
@@ -138,7 +190,8 @@ async function submitGroup() {
   }
   const payload = {
     search_url: url,
-    max_pages: clamp(Number(els.groupMaxPages.value) || 3, 1, 10)
+    max_pages: clamp(Number(els.groupMaxPages.value) || 3, 1, 10),
+    ...blacklistPayload('group')
   };
   await createTask(() => api.parseGroup(payload), els.groupButton, 'Групповой парсинг запущен');
 }
@@ -178,6 +231,20 @@ function toggleLoading(button, loading) {
 /* ---------- Список задач (дифф-обновление без перерисовки) ---------- */
 
 async function handleTaskListClick(event) {
+  const resumeButton = event.target.closest('[data-action="resume-task"]');
+  if (resumeButton) {
+    const taskId = resumeButton.closest('[data-task-id]')?.dataset.taskId;
+    if (!taskId) return;
+    try {
+      await api.resumeTask(taskId);
+      popup.info('Задача возобновлена', 'Капча пройдена — задача возвращена в очередь.');
+      await refreshTasks();
+    } catch (error) {
+      popup.error('Не удалось возобновить', error.message);
+    }
+    return;
+  }
+
   const cancelButton = event.target.closest('[data-action="cancel-task"]');
   if (!cancelButton) return;
   const taskId = cancelButton.closest('[data-task-id]')?.dataset.taskId;
@@ -250,6 +317,7 @@ function taskCardHTML(task) {
       <span class="badge border-indigo-500/30 bg-indigo-500/10 text-indigo-300">${escapeHtml(typeLabel)}</span>
       ${taskStatusBadge(task.status)}
       <span class="ml-auto text-[11px] text-slate-500">${task.created_at ? escapeHtml(formatDateTime(task.created_at)) : ''}</span>
+      ${task.status === 'waiting_captcha' ? '<button type="button" data-action="resume-task" class="btn-primary btn-sm">Капча пройдена — продолжить</button>' : ''}
       ${canCancel ? '<button type="button" data-action="cancel-task" class="btn-ghost btn-sm">Отменить</button>' : ''}
     </div>
     ${progressBarHTML(task)}

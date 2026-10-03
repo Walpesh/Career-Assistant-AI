@@ -28,12 +28,28 @@ from app.modules.parsing.schemas import (
     ParseManualRequest,
     ParseTaskResponse,
 )
+from app.modules.parsing.service import normalize_blacklist
 from app.modules.parsing.urls import validate_hh_search_url
 from app.modules.queue_manager.queues import QueueUnavailable, enqueue_task
 from app.modules.realtime.bus import publish_event
 from app.modules.vacancy_storage.service import extract_hh_vacancy_id
 
 router = APIRouter(prefix="/parsing", tags=["parsing"])
+
+
+def _blacklist_payload(payload) -> dict:
+    """Чёрный список для tasks.payload (docs/04 §4.9).
+
+    Тумбер выключен → слова в задачу не попадают вовсе, поэтому парсер
+    работает ровно по старым фильтрам и настройкам. Включён, но список
+    пуст → фильтр включается и не отсевает ничего (fail-safe).
+    """
+    if not getattr(payload, "blacklist_enabled", False):
+        return {"blacklist_enabled": False, "blacklist_words": []}
+    return {
+        "blacklist_enabled": True,
+        "blacklist_words": normalize_blacklist(payload.blacklist_words),
+    }
 
 
 async def _create_task(
@@ -115,7 +131,10 @@ async def parse_auto(
             "INVALID_SEARCH_CRITERIA",
         )
 
-    task_payload = payload.model_dump(exclude_none=True)
+    task_payload = {
+        **payload.model_dump(exclude_none=True),
+        **_blacklist_payload(payload),
+    }
     task_id = await _create_task(db, user.id, "parse_auto", payload=task_payload)
     return ParseTaskResponse(task_id=str(task_id), status="pending")
 
@@ -133,7 +152,11 @@ async def parse_group(
     """Групповой парсер: обход страниц результатов по готовой ссылке."""
     # Валидация ссылки сразу на входе (docs/04 §4.2): 400 вместо падения воркера.
     search_url = validate_hh_search_url(payload.search_url)
-    task_payload = {**payload.model_dump(exclude_none=True), "search_url": search_url}
+    task_payload = {
+        **payload.model_dump(exclude_none=True),
+        "search_url": search_url,
+        **_blacklist_payload(payload),
+    }
     task_id = await _create_task(db, user.id, "parse_group", payload=task_payload)
     return ParseTaskResponse(task_id=str(task_id), status="pending")
 

@@ -17,6 +17,8 @@ __all__ = [
     "LoginRequest",
     "RefreshRequest",
     "TokenResponse",
+    "LogoutResponse",
+    "WsTicketResponse",
     "UserOut",
 ]
 
@@ -46,11 +48,30 @@ class RefreshRequest(BaseModel):
 
 
 class TokenResponse(BaseModel):
-    """Ответ login/refresh: пара JWT (docs/03 §2, фронтенд ожидает access_token)."""
+    """Ответ login/refresh: пара JWT (docs/03 §2).
+
+    `refresh_token` дополнительно кладётся в HttpOnly-cookie (docs/03 §2) —
+    браузерный клиент использует именно cookie, а поле оставлено для обратной
+    совместимости и серверных интеграций.
+    """
 
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
+
+
+class LogoutResponse(BaseModel):
+    """Ответ POST /auth/logout."""
+
+    revoked: bool = True
+
+
+class WsTicketResponse(BaseModel):
+    """Одноразовый билет для подключения к WebSocket (docs/03 §8)."""
+
+    ticket: str
+    expires_in: int
+
 
 
 class UserOut(BaseModel):

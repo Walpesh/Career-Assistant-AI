@@ -16,29 +16,36 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.errors import AppError, DEFAULT_ERROR_CODES
+from app.core.rate_limit import RateLimitMiddleware
+from app.core.security_headers import SecurityHeadersMiddleware
 
 logger = logging.getLogger(__name__)
 
-FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
+
+def _frontend_dir() -> Path:
+    """Каталог frontend: backend/app → корень репо (dev) или /app (Docker)."""
+    repo_root = Path(__file__).resolve().parents[2]
+    candidates = (
+        repo_root / "frontend",  # dev: backend/app/main.py → корень/frontend
+        Path("/app/frontend"),  # Docker: WORKDIR /app + COPY frontend
+    )
+    for path in candidates:
+        if path.exists():
+            return path
+    return candidates[0]
 
 
-def _mask_sensitive_headers(headers: dict) -> dict:
-    """Замаскировать чувствительные заголовки в логах (Authorization, Cookie и др.)."""
-    sensitive_keys = {"authorization", "cookie", "auth", "token", "x-api-key", "x-auth-token"}
-    masked = {}
-    for key, value in headers.items():
-        if key.lower() in sensitive_keys:
-            masked[key] = "***MASKED***"
-        else:
-            masked[key] = value
-    return masked
+FRONTEND_DIR = _frontend_dir()
 
 
 class SensitiveHeaderLogFilter:
@@ -88,6 +95,11 @@ async def lifespan(app: FastAPI):
     DB short-polling отсутствует: задачи попадают в Redis при создании через
     `enqueue_job`, а воркеры забирают их настоящим чтением очереди ARQ.
     Поэтому в состоянии простоя SQL-запросов к `tasks` нет вообще.
+
+    Production: встроенные воркеры запрещены (QUEUE_EMBEDDED_WORKERS=false,
+    fail-fast в Settings) — API и воркеры работают независимыми рантаймами
+    (worker-parsing ×N, worker-llm строго ×1). Восстановление зависших задач
+    защищено Redis-блокировкой SET NX EX — выполняет один процесс.
     """
     from app.db.session import AsyncSessionLocal
     from app.modules.queue_manager.queues import (
@@ -103,6 +115,8 @@ async def lifespan(app: FastAPI):
     redis_available = await get_pool() is not None
 
     # Разовая реанимация задач, застрявших в pending/processing после сбоя.
+    # Защищена Redis-блокировкой SET NX EX: при старте N реплик API
+    # восстановление выполняет только один процесс (остальные — пропуск).
     if redis_available and settings.queue_recover_on_startup:
         try:
             await recover_pending_tasks(AsyncSessionLocal)
@@ -111,8 +125,17 @@ async def lifespan(app: FastAPI):
 
     await bridge.start()
 
-    if redis_available and settings.queue_embedded_workers:
+    # Dev/staging: воркеры внутри процесса FastAPI. Production: только
+    # отдельные рантаймы (worker-parsing ×N, worker-llm ×1) — флаг
+    # effective_embedded_workers в production всегда False (defence in depth
+    # поверх fail-fast валидатора Settings).
+    if redis_available and settings.effective_embedded_workers:
         await start_embedded_workers(AsyncSessionLocal)
+    elif redis_available and settings.is_production:
+        logger.info(
+            "Queue Manager: production — встроенные воркеры отключены, "
+            "задачи исполняют worker-parsing/worker-llm"
+        )
 
     try:
         yield
@@ -124,11 +147,17 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
+    # В production отключаем /docs, /redoc и /openapi.json — интерактивная
+    # документация не должна раскрывать схему API наружу.
+    _prod = settings.is_production
     app = FastAPI(
         title=settings.app_name,
         version=settings.app_version,
         description="Сервис автоматизации поиска, парсинга и анализа вакансий hh.ru + LLM-письма",
         lifespan=lifespan,
+        docs_url=None if _prod else "/docs",
+        redoc_url=None if _prod else "/redoc",
+        openapi_url=None if _prod else "/openapi.json",
     )
 
     # --- Единый формат ошибок (docs/03 §1: { detail, error_code }) ---
@@ -151,26 +180,38 @@ def create_app() -> FastAPI:
         # docs/03 §9: 400 — ошибка валидации.
         return _error_response(400, _validation_detail(exc), "VALIDATION_ERROR")
 
-    # --- CORS Middleware ---
+    # --- Middleware stack ---
+    # Порядок добавления: последний добавленный middleware — самый внешний.
+    # Итоговый порядок снаружи внутрь: SecurityHeaders → TrustedHost →
+    # HTTPSRedirect(prod) → CORS → RateLimit → GZip → приложение.
+    # SecurityHeaders снаружи, чтобы заголовки были и на 429/400-ответах.
+
+    # GZip-сжатие (docs/03 — уменьшение трафика JSON-ответов).
+    app.add_middleware(GZipMiddleware, minimum_size=settings.gzip_min_size)
+
+    # Redis sliding-window rate limiting (429 при превышении лимитов).
+    app.add_middleware(RateLimitMiddleware)
+
+    # CORS: только явные источники; методы/заголовки — белые списки.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origin_list,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_credentials=settings.cors_allow_credentials,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "Accept", "X-Requested-With"],
     )
 
-    # --- JWT Token Masking in Logs ---
-    # Добавляем middleware для маскировки токенов в логах запросов
-    @app.middleware("http")
-    async def mask_sensitive_data_in_logs(request: Request, call_next):
-        """Middleware для замаскировки чувствительных данных в логах."""
-        # Маскируем Authorization заголовок в логах
-        if "authorization" in request.headers:
-            # Токен не логируем, только факт наличия заголовка
-            pass
-        response = await call_next(request)
-        return response
+    if _prod:
+        # За TLS-терминатором: принудительный редирект http → https.
+        app.add_middleware(HTTPSRedirectMiddleware)
+
+    # Защита от Host-спуфинга: разрешены только известные хосты.
+    allowed_hosts = settings.trusted_host_list
+    if allowed_hosts:
+        app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
+
+    # Security-заголовки (CSP, HSTS, X-Frame-Options, Referrer-Policy, …).
+    app.add_middleware(SecurityHeadersMiddleware)
 
     app.include_router(api_router, prefix=settings.api_prefix)
 
@@ -178,6 +219,23 @@ def create_app() -> FastAPI:
     async def health() -> dict[str, str]:
         """Проверка живости сервиса."""
         return {"status": "ok", "app": settings.app_name, "version": settings.app_version}
+
+    @app.get("/health/live", tags=["system"])
+    async def health_live() -> dict[str, str]:
+        """Liveness: процесс жив и обрабатывает запросы (Kubernetes livenessProbe)."""
+        return {"status": "ok", "app": settings.app_name, "version": settings.app_version}
+
+    @app.get("/health/ready", tags=["system"])
+    async def health_ready() -> JSONResponse:
+        """Readiness: Postgres (SELECT 1), Redis (PING), Ollama (коннект).
+
+        Kubernetes readinessProbe: 200 — под принимает трафик, 503 — нет.
+        """
+        from app.modules.health.checks import check_readiness
+
+        report = await check_readiness()
+        status_code = 200 if report["status"] == "ready" else 503
+        return JSONResponse(status_code=status_code, content=report)
 
     # Frontend отдаётся тем же приложением (когда каталог существует).
     if FRONTEND_DIR.exists():

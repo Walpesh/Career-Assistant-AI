@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from typing import Protocol
+from typing import Any
 
 from app.core.config import settings
 
@@ -39,18 +39,11 @@ class QueueBusy(RuntimeError):
     """Свободного слота не нашлось — задача должна вернуться в очередь."""
 
 
-class _RedisLike(Protocol):
-    """Минимальный контракт Redis-клиента, нужный слотам."""
-
-    async def set(self, name: str, value: str, *, nx: bool = False, ex: int | None = None): ...
-
-    async def eval(self, script: str, numkeys: int, *keys_and_args): ...
-
-
 class RedisQueueSlots:
     """Слоты в Redis — работают одинаково в любом числе процессов."""
 
-    def __init__(self, redis: _RedisLike, *, prefix: str = "career:queue:slot") -> None:
+    def __init__(self, redis: Any, *, prefix: str = "career:queue:slot") -> None:
+        # redis: клиент redis.asyncio / ArqRedis — нужен только set() и eval().
         self._redis = redis
         self._prefix = prefix
 

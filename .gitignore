@@ -19,6 +19,7 @@ htmlcov/
 .env
 .env.*
 !.env.example
+!.env.compose.example
 
 # --- Node / frontend tooling ---
 node_modules/
@@ -51,3 +52,5 @@ live*_out.txt
 live*_err.txt
 llm_out.txt
 llm_err.txt
+alembic_*.txt
+uv.txt

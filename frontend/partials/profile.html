@@ -61,6 +61,20 @@
     </div>
   </section>
 
+  <!-- Информация в конец резюме (сразу после раздела «Резюме») -->
+  <section class="card p-5">
+    <div class="mb-4 flex items-center justify-between gap-3">
+      <h3 class="card-title">Хотите добавить информацию в конец резюме?</h3>
+      <span id="resume-addition-counter" class="text-xs tabular-nums text-slate-500">0 / 2000</span>
+    </div>
+    <textarea id="profile-resume-addition" rows="4" maxlength="2000" class="input resize-y"
+              placeholder="Например: «Готов к удалённой работе, есть релокация в Санкт-Петербург»"></textarea>
+    <p class="hint mt-2">
+      Если поле заполнено, текст автоматически дописывается в конец каждого сопроводительного
+      письма с новой строки — скриптовым методом, без участия нейросети. Пустое поле — ничего не добавляется.
+    </p>
+  </section>
+
   <!-- Навыки -->
   <section class="card p-5">
     <h3 class="card-title mb-4">Навыки</h3>
@@ -120,6 +134,21 @@
         </label>
       </div>
     </fieldset>
+  </section>
+
+  <!-- Предпочтения в анализах -->
+  <section class="card p-5">
+    <div class="mb-4 flex items-center justify-between gap-3">
+      <h3 class="card-title">Предпочтения в анализах</h3>
+      <span id="analysis-prefs-counter" class="text-xs tabular-nums text-slate-500">0 / 2000</span>
+    </div>
+    <textarea id="profile-analysis-preferences" rows="4" maxlength="2000" class="input resize-y"
+              placeholder="Например: «не хочу трудоустройство по ТК РФ, нужен удалённый формат, не готов к переезду»"></textarea>
+    <p class="hint mt-2">
+      Опишите свои пожелания обычным языком — они напрямую передаются нейросети на этапе анализа:
+      вакансии, противоречащие пожеланиям, получают более низкий <span class="font-mono">match_score</span>,
+      а сами пожелания попадают в раздел «Слабые стороны».
+    </p>
   </section>
 
   <!-- Панель сохранения -->

@@ -12,6 +12,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.modules.parsing.service import MAX_BLACKLIST_WORDS
+
 __all__ = [
     "ParseAutoRequest",
     "ParseGroupRequest",
@@ -44,6 +46,15 @@ class ParseAutoRequest(BaseModel):
         default=70, ge=0, le=100, description="Порог матчинга для автоматической генерации письма"
     )
     max_pages: int = Field(default=5, ge=1, le=20, description="Максимальное количество страниц результатов")
+    blacklist_enabled: bool = Field(
+        default=False,
+        description="Включён ли чёрный список слов (docs/04 §4.9). Выключен — фильтр не применяется",
+    )
+    blacklist_words: list[str] = Field(
+        default_factory=list,
+        max_length=MAX_BLACKLIST_WORDS,
+        description="Слова, при найденном совпадении вакансия не сохраняется в БД",
+    )
 
     model_config = {"json_schema_extra": {"example": {
         "keywords": ["python", "fastapi", "backend"],
@@ -51,7 +62,9 @@ class ParseAutoRequest(BaseModel):
         "work_formats": ["remote", "hybrid"],
         "schedules": ["fullDay"],
         "match_threshold": 75,
-        "max_pages": 5
+        "max_pages": 5,
+        "blacklist_enabled": True,
+        "blacklist_words": ["ТК РФ", "1С"]
     }}}
 
 
@@ -60,10 +73,21 @@ class ParseGroupRequest(BaseModel):
 
     search_url: str = Field(..., description="URL результатов поиска на hh.ru")
     max_pages: int = Field(default=5, ge=1, le=20, description="Максимальное количество страниц")
+    blacklist_enabled: bool = Field(
+        default=False,
+        description="Включён ли чёрный список слов (docs/04 §4.9). Выключен — фильтр не применяется",
+    )
+    blacklist_words: list[str] = Field(
+        default_factory=list,
+        max_length=MAX_BLACKLIST_WORDS,
+        description="Слова, при найденном совпадении вакансия не сохраняется в БД",
+    )
 
     model_config = {"json_schema_extra": {"example": {
         "search_url": "https://novokuznetsk.hh.ru/vacancies/razrabotchik",
-        "max_pages": 3
+        "max_pages": 3,
+        "blacklist_enabled": True,
+        "blacklist_words": ["ТК РФ"]
     }}}
 
 

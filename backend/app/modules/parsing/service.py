@@ -33,14 +33,85 @@ from app.modules.parsing.fetcher import build_page_fetcher
 from app.modules.parsing.listing import parse_listing
 from app.modules.parsing.urls import build_auto_search_url, build_page_url, validate_hh_search_url
 from app.modules.vacancy_storage.parser import extract_vacancy_fields
-from app.modules.vacancy_storage.service import upsert_vacancy
+from app.modules.vacancy_storage.service import delete_vacancy_by_hh_id, upsert_vacancy
 
 __all__ = [
+    "MAX_BLACKLIST_WORDS",
+    "normalize_blacklist",
+    "find_blacklist_matches",
+    "vacancy_text",
+    "is_blacklisted",
     "ParsingOutcome",
     "ParsingOrchestrator",
     "ProgressReporter",
     "NullProgress",
 ]
+
+
+#: Ограничение на размер чёрного списка (аналогично лимитам остальных полей).
+MAX_BLACKLIST_WORDS = 50
+
+
+def normalize_blacklist(words: object) -> list[str]:
+    """Нормализовать список слов чёрного списка.
+
+    Правила: обрезка пробелов, отсечение пустых значений, дедупликация
+    без учёта регистра и ограничение длины списка. Регистр и порядок
+    исходного текста сохраняются — они используются в логе отсева.
+    """
+    if words is None:
+        return []
+    if isinstance(words, str):
+        # Текст с переносами/запятыми — на случай ручного ввода.
+        raw_items = words.replace(",", "\n").splitlines()
+    elif isinstance(words, (list, tuple, set)):
+        raw_items = list(words)
+    else:
+        return []
+
+    seen: set[str] = set()
+    result: list[str] = []
+    for raw in raw_items:
+        if raw is None:
+            continue
+        word = str(raw).strip()
+        if not word:
+            continue
+        key = word.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(word)
+        if len(result) >= MAX_BLACKLIST_WORDS:
+            break
+    return result
+
+
+def vacancy_text(fields: dict) -> str:
+    """Текст вакансии для поиска чёрных слов.
+
+    Проверяются название, компания и описание — то есть всё, что реально
+    видно пользователю в карточке (docs/04 §4.9).
+    """
+    parts = [
+        fields.get("title"),
+        fields.get("company_name"),
+        fields.get("description_raw"),
+    ]
+    return "\n".join(str(part) for part in parts if part)
+
+
+def find_blacklist_matches(text: str, blacklist: list[str]) -> list[str]:
+    """Слова чёрного списка, встречающиеся в тексте (регистронезависимо)."""
+    if not text or not blacklist:
+        return []
+    haystack = text.casefold()
+    return [word for word in blacklist if word.casefold() in haystack]
+
+
+def is_blacklisted(fields: dict, blacklist: list[str]) -> list[str]:
+    """Совпавшие чёрные слова для полей вакансии; пусто — вакансия проходит."""
+    return find_blacklist_matches(vacancy_text(fields), blacklist)
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +128,7 @@ class ParsingOutcome:
     updated: int = 0
     not_found: int = 0
     failed: int = 0
+    blacklisted: int = 0
     pages_visited: int = 0
 
     def as_dict(self) -> dict:
@@ -66,6 +138,7 @@ class ParsingOutcome:
             "updated": self.updated,
             "not_found": self.not_found,
             "failed": self.failed,
+            "blacklisted": self.blacklisted,
             "pages_visited": self.pages_visited,
             "total": len(self.vacancy_ids),
         }
@@ -114,6 +187,7 @@ class ParsingOrchestrator:
         schedules: list[str] | None = None,
         max_pages: int = 5,
         progress: ProgressReporter | None = None,
+        blacklist: list[str] | None = None,
     ) -> ParsingOutcome:
         """Автопоиск (docs/04 §4.1)."""
         base_url = build_auto_search_url(
@@ -129,6 +203,7 @@ class ParsingOrchestrator:
             max_pages=max_pages,
             source="auto",
             progress=progress or NullProgress(),
+            blacklist=blacklist,
         )
 
     async def run_group(
@@ -139,6 +214,7 @@ class ParsingOrchestrator:
         search_url: str,
         max_pages: int = 5,
         progress: ProgressReporter | None = None,
+        blacklist: list[str] | None = None,
     ) -> ParsingOutcome:
         """Групповой парсер по готовой ссылке (docs/04 §4.2)."""
         return await self._collect_from_search(
@@ -148,6 +224,7 @@ class ParsingOrchestrator:
             max_pages=max_pages,
             source="group",
             progress=progress or NullProgress(),
+            blacklist=blacklist,
         )
 
     async def run_manual(
@@ -158,6 +235,7 @@ class ParsingOrchestrator:
         vacancy_url: str,
         hh_vacancy_id: str,
         progress: ProgressReporter | None = None,
+        blacklist: list[str] | None = None,
     ) -> ParsingOutcome:
         """Ручное добавление одной вакансии (docs/04 §4.3 — один запрос)."""
         report = progress or NullProgress()
@@ -170,6 +248,7 @@ class ParsingOrchestrator:
             url=vacancy_url,
             source="manual",
             response=response,
+            blacklist=blacklist,
         )
         await report(1, 1, "parsing_vacancy", "Карточка вакансии обработана")
         return outcome
@@ -184,6 +263,7 @@ class ParsingOrchestrator:
         max_pages: int,
         source: str,
         progress: ProgressReporter,
+        blacklist: list[str] | None = None,
     ) -> ParsingOutcome:
         """docs/04 §4.1 п.2 / §4.2 п.2: собрать id со страниц, затем обойти карточки."""
         outcome = ParsingOutcome()
@@ -226,6 +306,7 @@ class ParsingOrchestrator:
                     source=source,
                     response=response,
                     outcome=outcome,
+                    blacklist=blacklist,
                 )
             except (CaptchaDetected, RateLimitExceeded):
                 raise  # docs/04 §5: капча/429 обрабатываются очередью, не глотаются
@@ -246,8 +327,14 @@ class ParsingOrchestrator:
         source: str,
         response: FetchResponse,
         outcome: ParsingOutcome | None = None,
+        blacklist: list[str] | None = None,
     ) -> ParsingOutcome:
-        """Разбор + дедупликация + сохранение (docs/04 §4.5, §7, §8)."""
+        """Разбор + дедупликация + сохранение (docs/04 §4.5, §7, §8).
+
+        Чёрный список слов (docs/04 §4.9) проверяется ДО сохранения в БД:
+        если слово из списка есть в содержании вакансии, вакансия не
+        сохраняется, а уже сохранённая ранее — удаляется.
+        """
         result = outcome if outcome is not None else ParsingOutcome()
 
         if response.status_code in _NOT_FOUND_STATUSES:
@@ -269,6 +356,24 @@ class ParsingOrchestrator:
             # Капча или изменившаяся вёрстка (docs/04 §5) — карточка не разобрана.
             result.failed += 1
             return result
+
+        # docs/04 §4.9: чёрный список слов — отсев до записи в БД.
+        if blacklist:
+            matches = is_blacklisted(fields, blacklist)
+            if matches:
+                removed = await delete_vacancy_by_hh_id(
+                    db,
+                    user_id=user_id,
+                    hh_vacancy_id=hh_vacancy_id,
+                )
+                result.blacklisted += 1
+                logger.info(
+                    "Вакансия %s отсечена чёрным списком (%s); удалена из БД: %s",
+                    hh_vacancy_id,
+                    ", ".join(matches),
+                    "да" if removed else "нет",
+                )
+                return result
 
         _, created = await upsert_vacancy(
             db,

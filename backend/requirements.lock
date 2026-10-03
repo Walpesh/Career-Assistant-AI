@@ -1,0 +1,52 @@
+# Career-Assistant-AI — pinned production lockfile (Python 3.12).
+# Устанавливается в Docker-образе: pip install -r backend/requirements.lock
+# Источник версий: backend/pyproject.toml [project.dependencies].
+# Обновление: pip-compile / ручная правка + проверка CI (ruff, mypy, pytest).
+alembic==1.20.0
+annotated-types==0.8.0
+anyio==4.15.1
+arq==0.28.0
+asyncpg==0.31.0
+bcrypt==5.0.0
+certifi==2026.7.22
+cffi==2.1.1
+charset-normalizer==3.5.1
+click==8.5.0
+cryptography==50.0.1
+curl-cffi==0.16.3
+dnspython==2.8.0
+ecdsa==0.19.2
+email-validator==2.3.0
+fastapi==0.141.1
+greenlet==3.5.6
+h11==0.16.0
+hiredis==3.4.2
+httpcore==1.0.9
+httptools==0.8.0
+httpx==0.28.1
+idna==3.19
+mako==1.4.3
+markupsafe==3.0.3
+mss==10.2.0
+nodriver==0.50.3
+patchright==1.63.0
+playwright==1.63.0
+playwright-stealth==2.0.3
+pyasn1==0.6.4
+pycparser==3.0
+pydantic-core==2.46.5
+pydantic==2.13.5
+pydantic-settings==2.15.0
+pyee==13.0.1
+pyjwt==2.15.0
+python-dotenv==1.2.3
+python-jose==3.5.0
+python-multipart==0.0.32
+redis==5.3.1
+rsa==4.9.1
+sqlalchemy[asyncio]==2.1.1
+starlette==1.6.0
+typing-extensions==4.16.0
+uvicorn[standard]==0.53.0
+watchfiles==1.3.0
+websockets==16.1.1
