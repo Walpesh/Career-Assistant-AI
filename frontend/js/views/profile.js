@@ -5,6 +5,7 @@
 
 import { api } from '../core/api.js';
 import { on } from '../core/bus.js';
+import { session } from '../core/session.js';
 import {
   getState,
   setState,
@@ -18,6 +19,7 @@ import { loadPartial } from '../core/partials.js';
 import { popup } from '../components/fadeout-action-popup.js';
 import { TagInput } from '../components/tag-input.js';
 import { copyText, charCount, formatDateTime, clamp } from '../core/utils.js';
+import { confirmDialog } from '../components/overlay.js';
 
 let els = {};
 let skillsInput = null;
@@ -54,7 +56,18 @@ export async function mount() {
     compactMeta: document.getElementById('compact-meta'),
     saveButton: document.getElementById('btn-save-profile'),
     resetButton: document.getElementById('btn-reset-profile'),
-    workFormats: target.querySelectorAll('input[name="work-format"]')
+    workFormats: target.querySelectorAll('input[name="work-format"]'),
+    // Секция «Приватность и данные» (docs/03 §10–§11).
+    accountSummary: {
+      vacancies: document.getElementById('account-sum-vacancies'),
+      tasks: document.getElementById('account-sum-tasks'),
+      refreshTokens: document.getElementById('account-sum-refresh-tokens'),
+      tier: document.getElementById('account-sum-tier')
+    },
+    billingQuotas: document.getElementById('billing-quotas'),
+    billingResetsAt: document.getElementById('billing-resets-at'),
+    exportButton: document.getElementById('btn-export-data'),
+    deleteButton: document.getElementById('btn-delete-account')
   };
 
   skillsInput = new TagInput(els.skills, { placeholder: els.skills.dataset.placeholder, max: 50, onChange: markDirty });
@@ -97,6 +110,12 @@ export async function mount() {
   els.resetButton.addEventListener('click', resetForm);
   els.copyCompact.addEventListener('click', copyCompactResume);
   els.convertButton.addEventListener('click', convertResume);
+  els.exportButton.addEventListener('click', exportAccountData);
+  els.deleteButton.addEventListener('click', deleteAccount);
+
+  // Сводка аккаунта и квоты загружаются в фоне: они не нужны для правки
+  // профиля и не должны задерживать открытие вкладки.
+  loadAccountOverview();
 
   // Завершение задачи convert_resume приходит по WS.
   on('ws:task.completed', () => {
@@ -309,6 +328,139 @@ async function convertResume() {
 
 function setConvertLoading(loading) {
   toggleLoading(els.convertButton, loading);
+/* ---------- Приватность и квоты (docs/03 §10–§11) ---------- */
+
+/** Подписи видов квот: ключи приходят из backend (QuotaKind). */
+const QUOTA_LABELS = {
+  parse: 'Запуски парсинга',
+  letter: 'Сопроводительные письма',
+  analysis: 'Анализы вакансий',
+  proxy_mb: 'Прокси-трафик, МБ'
+};
+
+/** Загрузить сводку данных аккаунта и состояние суточных квот. */
+async function loadAccountOverview() {
+  // Две независимые загрузки: падение одной (например, отключённого биллинга)
+  // не должно оставлять вторую незаполненной.
+  const [summary, usage] = await Promise.allSettled([
+    api.accountSummary(),
+    api.billingUsage()
+  ]);
+
+  if (summary.status === 'fulfilled') {
+    const data = summary.value || {};
+    els.accountSummary.vacancies.textContent = data.vacancies ?? '—';
+    els.accountSummary.tasks.textContent = data.tasks ?? '—';
+    els.accountSummary.refreshTokens.textContent = data.refresh_tokens ?? '—';
+  }
+
+  if (usage.status === 'fulfilled') {
+    renderQuotas(usage.value || {});
+  } else if (els.billingQuotas) {
+    // Квоты недоступны (BILLING_ENABLED=false или ошибка) — это не поломка
+    // интерфейса, поэтому показываем нейтральный текст, а не ошибку.
+    els.billingQuotas.innerHTML =
+      '<li class="hint">Лимиты тарифа сейчас не применяются.</li>';
+    els.billingResetsAt.textContent = '';
+  }
+}
+
+/** Отрисовать суточные квоты с прогресс-барами. */
+function renderQuotas(data) {
+  const quotas = data.quotas || {};
+  const rows = Object.entries(QUOTA_LABELS)
+    .map(([kind, label]) => {
+      const quota = quotas[kind];
+      if (!quota) return '';
+      const used = Number(quota.used ?? 0);
+      const unlimited = Boolean(quota.unlimited);
+      // Безлимит рисуем как «использовано», иначе процент бессмыслен.
+      const percent = unlimited || !quota.limit ? 0 : Math.min(100, (used / quota.limit) * 100);
+      const barColor = quota.exhausted ? 'bg-rose-500' : percent > 75 ? 'bg-amber-400' : 'bg-indigo-500';
+      const value = unlimited
+        ? `${used} · без лимита`
+        : `${used} / ${quota.limit}`;
+      const barWidth = unlimited ? '0%' : `${percent}%`;
+
+      return `
+        <li class="flex items-center gap-3">
+          <span class="w-40 shrink-0 text-slate-400">${label}</span>
+          <span class="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-800">
+            <span class="block h-full rounded-full ${barColor}" style="width: ${barWidth}"></span>
+          </span>
+          <span class="w-28 shrink-0 text-right tabular-nums text-slate-400">${value}</span>
+        </li>`;
+    })
+    .filter(Boolean)
+    .join('');
+
+  els.billingQuotas.innerHTML = rows || '<li class="hint">Нет данных о квотах.</li>';
+  els.billingResetsAt.textContent = data.resets_at
+    ? `Обновление в ${formatDateTime(data.resets_at)}`
+    : '';
+}
+
+/**
+ * Выгрузить все персональные данные в файл (152-ФЗ ст. 14).
+ * Ответ — большой JSON, поэтому он скачивается блобом, а не вставляется
+ * в DOM: иначе десятки тысяч строк резюме и вакансий затормозят интерфейс.
+ */
+async function exportAccountData() {
+  toggleLoading(els.exportButton, true);
+  try {
+    const { blob, filename } = await api.exportAccountData();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    // Освобождение URL: без revokeObjectURL блоб держится в памяти до
+    // перезагрузки страницы.
+    URL.revokeObjectURL(url);
+    popup.success('Данные выгружены', `Файл ${filename} сохранён в загрузки.`);
+  } catch (error) {
+    popup.error('Не удалось выгрузить данные', error.message);
+  } finally {
+    toggleLoading(els.exportButton, false);
+  }
+}
+
+/**
+ * Безвозвратно удалить аккаунт и все персональные данные (152-ФЗ ст. 21).
+ * Действие необратимо, поэтому требует явного подтверждения с указанием
+ * того, что именно будет удалено.
+ */
+async function deleteAccount() {
+  const confirmed = await confirmDialog({
+    title: 'Удалить аккаунт?',
+    message:
+      'Будут безвозвратно удалены профиль, резюме, все вакансии, анализы, ' +
+      'сопроводительные письма, история задач и подписка. Восстановление ' +
+      'невозможно. Перед удалением можно скачать копию данных.',
+    confirmLabel: 'Удалить навсегда',
+    danger: true
+  });
+  if (!confirmed) return;
+
+  toggleLoading(els.deleteButton, true);
+  try {
+    const result = await api.deleteAccount();
+    const rows = result?.report?.total_rows_deleted;
+    session.clear();
+    popup.success(
+      'Аккаунт удалён',
+      rows ? `Удалено записей: ${rows}. Данные аккаунта стёрты.` : 'Данные аккаунта стёрты.'
+    );
+    // Перезагрузка — единственный надёжный способ сбросить состояние SPA
+    // после удаления сессии и всех загруженных данных.
+    setTimeout(() => window.location.reload(), 1200);
+  } catch (error) {
+    toggleLoading(els.deleteButton, false);
+    popup.error('Не удалось удалить аккаунт', error.message);
+  }
+}
 }
 
 function toggleLoading(button, loading) {

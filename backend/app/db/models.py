@@ -1,7 +1,14 @@
 """SQLAlchemy 2.0 ORM-модели Career-Assistant-AI.
 
-Схема строго соответствует docs/02_DATABASE.md (6 таблиц):
+Схема соответствует docs/02_DATABASE.md. Базовые таблицы:
 users, user_profiles, vacancies, analyses, cover_letters, tasks.
+
+Монетизация, приватность и учёт трафика (TASK «Legal / Monetization»,
+docs/02 §3.8–§3.11):
+    subscriptions   — тарифный план пользователя (free / pro / enterprise);
+    usage_counters  — расход суточных квот по видам операций;
+    payment_events  — идемпотентность вебхуков платёжных шлюзов;
+    proxy_usage_logs — объём прокси-трафика по задачам + доля капчи.
 
 Дополнительно (согласовано): CHECK-ограничения по перечисленным в спецификации
 значениям (vacancies.status/source, analyses.match_score, tasks.status,
@@ -11,12 +18,14 @@ user_profiles.match_threshold) и updated_at в tasks (общее правило
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     Index,
@@ -25,6 +34,7 @@ from sqlalchemy import (
     SmallInteger,
     String,
     Text,
+    func,
     text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
@@ -40,6 +50,10 @@ __all__ = [
     "CoverLetter",
     "Task",
     "RefreshToken",
+    "Subscription",
+    "UsageCounter",
+    "PaymentEvent",
+    "ProxyUsageLog",
 ]
 
 
@@ -68,6 +82,20 @@ class User(Base, TimestampMixin):
     vacancies: Mapped[list[Vacancy]] = relationship(back_populates="user")
     tasks: Mapped[list[Task]] = relationship(back_populates="user")
     refresh_tokens: Mapped[list[RefreshToken]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    # Каскадные связи монетизации и учёта трафика: DELETE /api/v1/account
+    # (docs/03 §10) удаляет их вместе с пользователем — в БД не остаётся
+    # персональных данных оплаты или расхода квот (152-ФЗ ст. 21).
+    subscription: Mapped[Subscription | None] = relationship(
+        back_populates="user",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+    usage_counters: Mapped[list[UsageCounter]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    proxy_usage_logs: Mapped[list[ProxyUsageLog]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
 
@@ -291,6 +319,64 @@ class Task(Base, TimestampMixin):
     vacancy: Mapped[Vacancy | None] = relationship(back_populates="tasks")
 
 
+class Subscription(Base, TimestampMixin):
+    """Тарифный план пользователя: free / pro / enterprise (docs/02 §3.8).
+
+    У каждого пользователя не более одной активной подписки. Отсутствие строки
+    равносильно тарифу ``free`` с базовыми квотами — поэтому ``get_tier()``
+    в Billing Module никогда не падает на «новом» аккаунте.
+    """
+
+    __tablename__ = "subscriptions"
+    __table_args__ = (
+        CheckConstraint(
+            "tier IN ('free', 'pro', 'enterprise')",
+            name="ck_subscriptions_tier",
+        ),
+        CheckConstraint(
+            "status IN ('active', 'past_due', 'canceled', 'expired')",
+            name="ck_subscriptions_status",
+        ),
+        CheckConstraint(
+            "daily_parsing_jobs >= 0 AND daily_cover_letters >= 0 "
+            "AND daily_analyses >= 0 AND daily_proxy_mb >= 0",
+            name="ck_subscriptions_quotas_non_negative",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    tier: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=text("'free'")
+    )
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=text("'active'")
+    )
+    #: Платёжный шлюз-источник подписки: yookassa / cloudpayments / stripe.
+    provider: Mapped[str | None] = mapped_column(String(32))
+    #: Идентификатор платежа/подписки у шлюза (сверка с вебхуком).
+    external_id: Mapped[str | None] = mapped_column(String(128))
+    #: Переопределённые суточные квоты (NULL — берутся из каталога тарифов).
+    daily_parsing_jobs: Mapped[int | None] = mapped_column(Integer)
+    daily_cover_letters: Mapped[int | None] = mapped_column(Integer)
+    daily_analyses: Mapped[int | None] = mapped_column(Integer)
+    daily_proxy_mb: Mapped[int | None] = mapped_column(Integer)
+    current_period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    canceled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    user: Mapped[User] = relationship(back_populates="subscription")
+
+
 class RefreshToken(Base, TimestampMixin):
     """Хранилище refresh-токенов: ротация и обнаружение повторного использования.
 
@@ -324,6 +410,151 @@ class RefreshToken(Base, TimestampMixin):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     user: Mapped[User] = relationship(back_populates="refresh_tokens")
+
+
+class UsageCounter(Base, TimestampMixin):
+    """Расход суточных квот пользователя (docs/02 §3.9).
+
+    Квота считается по календарным суткам (UTC) и по видам операций
+    (``quota_kind``: parse / letter / analysis / proxy_mb), поэтому одна
+    строка на (user_id, day, quota_kind) — это текущий счётчик за сутки.
+    Уникальный индекс делает начисление идемпотентным при параллельных
+    запросах (ON CONFLICT DO UPDATE в Billing Module).
+    """
+
+    __tablename__ = "usage_counters"
+    __table_args__ = (
+        CheckConstraint(
+            "quota_kind IN ('parse', 'letter', 'analysis', 'proxy_mb')",
+            name="ck_usage_counters_kind",
+        ),
+        CheckConstraint("used >= 0", name="ck_usage_counters_used_non_negative"),
+        # Уникальный индекс вместо UniqueConstraint: он же служит путём
+        # ON CONFLICT (user_id, day, quota_kind) для атомарного начисления.
+        Index("ux_usage_counters_user_day_kind", "user_id", "day", "quota_kind", unique=True),
+        Index("ix_usage_counters_day", "day"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    #: Календарные сутки расхода (UTC).
+    day: Mapped[date] = mapped_column(Date, nullable=False)
+    quota_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    used: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+
+    user: Mapped[User] = relationship(back_populates="usage_counters")
+
+
+class PaymentEvent(Base):
+    """Журнал обработанных вебхуков платёжных шлюзов (docs/02 §3.10).
+
+    Ключ идемпотентности — ``(provider, external_event_id)``: повторная
+    доставка одного и того же события (шлюзы её гарантированно повторяют)
+    не должна повторно менять тариф или начислять оплату дважды.
+    Соответствующий уникальный индекс — техническое требование, поэтому
+    ``created_at`` проставляется явно (без TimestampMixin-обновления).
+    """
+
+    __tablename__ = "payment_events"
+    __table_args__ = (
+        Index(
+            "ux_payment_events_provider_external",
+            "provider",
+            "external_event_id",
+            unique=True,
+        ),
+        Index("ix_payment_events_user_id", "user_id"),
+        CheckConstraint(
+            "status IN ('processed', 'ignored', 'failed')",
+            name="ck_payment_events_status",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()"),
+    )
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    external_event_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    tier: Mapped[str | None] = mapped_column(String(16))
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=text("'processed'")
+    )
+    payload: Mapped[dict | None] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ProxyUsageLog(Base):
+    """Расход прокси-трафика по задаче парсинга (docs/02 §3.11).
+
+    Строка пишется один раз на задачу (``task_id`` уникален) и содержит объём
+    скачанного трафика, число запросов и число встреченных капч. По этим
+    данным Proxy Usage Logger считает стоимость трафика и долю капчи, а при
+    превышении порога (docs/04 §9 — 5%) поднимает предупреждение.
+    """
+
+    __tablename__ = "proxy_usage_logs"
+    __table_args__ = (
+        Index("ux_proxy_usage_logs_task_id", "task_id", unique=True),
+        Index("ix_proxy_usage_logs_user_id", "user_id"),
+        CheckConstraint("bytes_total >= 0", name="ck_proxy_usage_logs_bytes_non_negative"),
+        CheckConstraint(
+            "requests_total >= 0", name="ck_proxy_usage_logs_requests_non_negative"
+        ),
+        CheckConstraint(
+            "captcha_total >= 0", name="ck_proxy_usage_logs_captcha_non_negative"
+        ),
+        CheckConstraint(
+            "captcha_total <= requests_total",
+            name="ck_proxy_usage_logs_captcha_lte_requests",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    task_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tasks.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    bytes_total: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default=text("0")
+    )
+    requests_total: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    captcha_total: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    user: Mapped[User] = relationship(back_populates="proxy_usage_logs")
 
 
 

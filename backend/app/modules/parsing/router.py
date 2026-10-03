@@ -22,6 +22,8 @@ from app.core.errors import AppError
 from app.db.models import Task
 from app.db.session import get_db
 from app.modules.auth.deps import get_current_user
+from app.modules.billing.middleware import quota_consumed
+from app.modules.billing.tiers import QuotaKind
 from app.modules.parsing.schemas import (
     ParseAutoRequest,
     ParseGroupRequest,
@@ -131,6 +133,11 @@ async def parse_auto(
             "INVALID_SEARCH_CRITERIA",
         )
 
+    # Списание суточной квоты парсинга ДО создания задачи: 429 отдаётся
+    # синхронно, и в БД не появляется задача, которую воркер всё равно
+    # не выполнит (docs/03 §11).
+    await quota_consumed(db, user, QuotaKind.PARSE)
+
     task_payload = {
         **payload.model_dump(exclude_none=True),
         **_blacklist_payload(payload),
@@ -152,6 +159,7 @@ async def parse_group(
     """Групповой парсер: обход страниц результатов по готовой ссылке."""
     # Валидация ссылки сразу на входе (docs/04 §4.2): 400 вместо падения воркера.
     search_url = validate_hh_search_url(payload.search_url)
+    await quota_consumed(db, user, QuotaKind.PARSE)
     task_payload = {
         **payload.model_dump(exclude_none=True),
         "search_url": search_url,
@@ -173,7 +181,10 @@ async def parse_manual(
 ) -> ParseTaskResponse:
     """Ручное добавление одной вакансии по прямой ссылке."""
     # Валидация ссылки сразу на входе (docs/04 §4.3): 400 вместо падения воркера.
-    vacancy_url = extract_hh_vacancy_id(payload.vacancy_url)
+    # Результат не используется — важен сам факт проверки формата; в payload
+    # остаётся исходная ссылка, её разбирает воркер.
+    extract_hh_vacancy_id(payload.vacancy_url)
+    await quota_consumed(db, user, QuotaKind.PARSE)
     task_payload = payload.model_dump(exclude_none=True)
     task_id = await _create_task(db, user.id, "parse_manual", payload=task_payload)
     return ParseTaskResponse(task_id=str(task_id), status="pending")

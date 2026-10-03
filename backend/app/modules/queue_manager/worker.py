@@ -27,10 +27,12 @@ SELECT'ов к ней нет вообще.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 import signal
 import time
 import uuid
+from contextlib import suppress
 from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -40,6 +42,8 @@ from app.core.sentry import capture_exception
 from app.db.models import Task
 from app.modules.anti_ban import CaptchaDetected, RateLimitExceeded
 from app.modules.anti_ban.exceptions import AntiBanError
+from app.modules.billing.service import QuotaExceeded, consume_quota
+from app.modules.billing.tiers import QuotaKind
 from app.modules.metrics.registry import (
     observe_llm_execution,
     observe_task_outcome,
@@ -58,6 +62,7 @@ from app.modules.queue_manager.queues import (
 )
 from app.modules.queue_manager.slots import LLM_SLOT_GROUP, parsing_slot_group
 from app.modules.realtime.bus import publish_event
+from app.modules.usage_logger import logger_for_task
 
 __all__ = [
     "PARSING_TASK_TYPES",
@@ -84,6 +89,15 @@ log = get_logger(__name__)
 #: Воркер перестаёт брать новые job'ы, активные — завершаются или
 #: откладываются (Retry/defer) до остановки пода (Kubernetes `preStop`).
 _shutdown_requested = asyncio.Event()
+
+#: HTTP-сессия текущей задачи парсинга (contextvar — безопасно при asyncio).
+#: Нужна `_record_proxy_usage`, чтобы после выполнения снять счётчики
+#: объёма трафика и капчи: сам оркестратор к тому моменту уже недоступен.
+#: ContextVar, а не обычная переменная, — потому что в одном процессе
+#: одновременно идут задачи разных пользователей, и их трафик нельзя смешивать.
+_CURRENT_PARSING_SESSION: contextvars.ContextVar = contextvars.ContextVar(
+    "career_parsing_http_session", default=None
+)
 
 
 def install_signal_handlers() -> None:
@@ -403,7 +417,13 @@ async def run_parsing_task(ctx: dict, task_id: str) -> dict | None:
 
 
 async def _execute_parsing(session: AsyncSession, task: Task) -> dict:
-    """Выполнить задачу парсинга и зафиксировать её итоговый статус."""
+    """Выполнить задачу парсинга и зафиксировать её итоговый статус.
+
+    В ``finally`` записывается расход прокси-трафика (Proxy Usage Logger):
+    учёт обязателен и для успешных, и для упавших задач — иначе самый
+    дорогой сценарий (сорванная капчей задача) остался бы в статистике
+    незамеченным.
+    """
     reporter = TaskProgressReporter(session, task)
     try:
         outcome = await _dispatch_parsing(session, task, reporter)
@@ -441,10 +461,47 @@ async def _execute_parsing(session: AsyncSession, task: Task) -> dict:
         observe_task_outcome(task.task_type, "error")
         await _finish_failed(session, task, f"Ошибка парсинга: {exc}")
         return {"failed": 1, "error": str(exc)}
+    finally:
+        await _record_proxy_usage(session, task)
 
     result = outcome.as_dict()
     await _finish_completed(session, task, result)
     return result
+
+
+async def _record_proxy_usage(session: AsyncSession, task: Task) -> None:
+    """Записать объём прокси-трафика, собранный задачей парсинга.
+
+    Данные берутся из счётчиков ``AntiBanSession``, которые накапливаются в
+    памяти воркера и не пишутся в БД на каждом HTTP-запросе. Ошибка учёта
+    проглатывается: невозможность посчитать трафик не должна превращать
+    успешный парсинг в failed-задачу.
+    """
+    http_session = _CURRENT_PARSING_SESSION.get()
+    if http_session is None:
+        return
+
+    try:
+        usage_logger = logger_for_task(task.id, task.user_id)
+        usage_logger.usage.bytes_total = int(getattr(http_session, "bytes_total", 0))
+        usage_logger.usage.requests_total = int(getattr(http_session, "response_count", 0))
+        usage_logger.usage.captcha_total = int(getattr(http_session, "captcha_count", 0))
+
+        # Списываем квоту трафика (proxy_mb) и записываем лог. Порядок важен:
+        # сначала квота, потом лог — иначе при превышении квоты расход
+        # «потерялся» бы между двумя вызовами.
+        megabytes = max(1, int(usage_logger.usage.megabytes))
+        await consume_quota(session, task.user_id, QuotaKind.PROXY_MB, megabytes)
+        await usage_logger.flush(session)
+    except QuotaExceeded:
+        # Трафик уже оплачен прокси-провайдеру: пишем лог и предупреждаем, но
+        # задачу не переводим в failed — вакансии-то собраны, терять их
+        # из-за лимита расхода было бы неверно.
+        log.warning("proxy_usage: квота трафика исчерпана", task_id=str(task.id))
+        with suppress(Exception):
+            await usage_logger.flush(session)
+    except Exception:  # noqa: BLE001 — учёт трафика не должен ронять задачу
+        logger.debug("Не удалось записать расход прокси-трафика", exc_info=True)
 
 
 async def _maybe_enqueue_analysis(
@@ -516,6 +573,9 @@ async def _dispatch_parsing(
 
     payload = task.payload or {}
     orchestrator = ParsingOrchestrator()
+    # Пробрасываем HTTP-сессию в contextvar: после выполнения из неё снимаются
+    # счётчики объёма трафика и капчи для Proxy Usage Logger.
+    _CURRENT_PARSING_SESSION.set(orchestrator.http)
 
     # Чёрный список слов (docs/04 §4.9): работает только при включённом тумблере.
     # Выключенный тумблер → пустой список → вакансии обрабатываются по-старому.

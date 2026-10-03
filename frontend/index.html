@@ -17,7 +17,7 @@
     Хэш пересчитывается командой `npm run build` (tools/build-assets.mjs).
   -->
   <link rel="stylesheet" href="css/styles.min.css"
-        integrity="sha384-rdO6tr4tmG1DwkZqdxLEmlQY301yrQoOnirzelmya0bDE5O1DB4Ucd7ezhRVZLKc"
+        integrity="sha384-oAxoV5p3BirZmYjU32ElB9t9oFEQQ4pijgk3PZBYgT5LiOunr7in+spUxn/txFUt"
         crossorigin="anonymous" />
 
   <!--
@@ -127,12 +127,41 @@
             <span class="hidden h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" data-spinner></span>
             <span>Создать аккаунт</span>
           </button>
+
+          <!--
+              Согласие на обработку ПД (152-ФЗ ст. 9). Поле обязательно и
+              проверяется в auth.js ДО отправки формы: без согласия регистрация
+              не выполняется. Ссылки ведут на полные тексты документов —
+              короткая галочка без них не является надлежащим согласием.
+          -->
+          <label class="flex cursor-pointer items-start gap-2.5 text-xs leading-relaxed text-slate-400">
+            <input id="register-consent" name="consent" type="checkbox" required
+                   class="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-700 bg-slate-950 accent-indigo-500" />
+            <span>
+              Я согласен на обработку персональных данных и принимаю
+              <a class="text-indigo-400 underline underline-offset-2 hover:text-indigo-300" href="/legal/consent.html" target="_blank" rel="noopener">условия обработки</a>,
+              <a class="text-indigo-400 underline underline-offset-2 hover:text-indigo-300" href="/legal/privacy.html" target="_blank" rel="noopener">политику конфиденциальности</a>
+              и
+              <a class="text-indigo-400 underline underline-offset-2 hover:text-indigo-300" href="/legal/terms.html" target="_blank" rel="noopener">условия использования</a>.
+            </span>
+          </label>
+
           <p class="hint">После регистрации войдите с указанными данными.</p>
         </form>
       </div>
 
+      <!--
+          Правовые ссылки и дисклеймер о сборе вакансий. Видны ДО входа и
+          регистрации: пользователь должен знать, как собираются данные
+          с hh.ru, ещё не принимая Условия.
+      -->
       <p class="mt-4 text-center text-[11px] leading-relaxed text-slate-500">
         Работает без официального API hh.ru · LLM-очередь: Ollama / внешние провайдеры
+      </p>
+      <p class="mt-2 text-center text-[11px] leading-relaxed text-slate-600">
+        Вакансии собираются автоматически с публичных страниц hh.ru через резидентные
+        прокси; условия и риски описаны в
+        <a class="underline decoration-slate-700 underline-offset-2 hover:text-slate-400" href="/legal/terms.html" target="_blank" rel="noopener">условиях использования</a>
       </p>
     </div>
   </section>

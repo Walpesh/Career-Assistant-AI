@@ -22,6 +22,10 @@
 | `cover_letters`       | Сгенерированные сопроводительные письма         |
 | `tasks`               | Очередь задач (для отображения прогресса)       |
 | `refresh_tokens`      | Реестр refresh-токенов (ротация, reuse detection)|
+| `subscriptions`       | Тарифный план пользователя (free / pro / enterprise) |
+| `usage_counters`      | Расход суточных квот по видам операций           |
+| `payment_events`      | Идемпотентность вебхуков платёжных шлюзов       |
+| `proxy_usage_logs`    | Объём прокси-трафика и доля капчи по задачам     |
 
 ---
 
@@ -190,6 +194,112 @@ reuse (кражи) токена.
 
 ---
 
+### 3.8. `subscriptions` (тарифный план)
+
+Тариф определяет суточные квоты (Billing Module, docs/03 §11). Отсутствие
+строки равносильно тарифу `free`, поэтому «новый» аккаунт никогда не падает
+при обращении к тарифу.
+
+| Поле                    | Тип          | Ограничения                                | Описание                                  |
+|-------------------------|--------------|--------------------------------------------|-------------------------------------------|
+| id                      | UUID         | PRIMARY KEY, DEFAULT gen_random_uuid()     |                                           |
+| user_id                 | UUID         | NOT NULL, FK → users.id (cascade delete), UNIQUE | Тариф пользователя (не более одного) |
+| tier                    | VARCHAR(16)  | NOT NULL, DEFAULT 'free', CHECK            | free / pro / enterprise                   |
+| status                  | VARCHAR(16)  | NOT NULL, DEFAULT 'active', CHECK          | active / past_due / canceled / expired    |
+| provider                | VARCHAR(32)  |                                            | yookassa / cloudpayments / stripe         |
+| external_id             | VARCHAR(128) |                                            | Идентификатор платежа у шлюза             |
+| daily_parsing_jobs      | INTEGER      | CHECK ≥ 0                                  | Переопределение квоты (NULL = по тарифу)  |
+| daily_cover_letters     | INTEGER      | CHECK ≥ 0                                  | Переопределение квоты                     |
+| daily_analyses          | INTEGER      | CHECK ≥ 0                                  | Переопределение квоты                     |
+| daily_proxy_mb          | INTEGER      | CHECK ≥ 0                                  | Переопределение квоты                     |
+| current_period_end      | TIMESTAMPTZ  |                                            | Конец оплаченного периода                 |
+| canceled_at             | TIMESTAMPTZ  |                                            | Момент отмены подписки                    |
+| created_at / updated_at | TIMESTAMPTZ  | DEFAULT now()                              |                                           |
+
+**Индексы:** UNIQUE (user_id) — один тариф на пользователя.
+
+> Значения `daily_*` — индивидуальные переопределения для enterprise-контрактов,
+> где лимиты фиксируются письменно, а не по каталогу тарифов.
+
+---
+
+### 3.9. `usage_counters` (расход суточных квот)
+
+Квота считается по календарным суткам **UTC** и по видам операций
+(`quota_kind`). Счётчик «обнуляется» сменой `day`, поэтому история не растёт
+бесконечно и не требует фоновой очистки в горячем пути.
+
+| Поле                   | Тип          | Ограничения                              | Описание                              |
+|------------------------|--------------|------------------------------------------|---------------------------------------|
+| id                     | UUID         | PRIMARY KEY                              |                                       |
+| user_id                | UUID         | NOT NULL, FK → users.id (cascade delete) | Владелец квоты                        |
+| day                    | DATE         | NOT NULL                                 | Сутки расхода (UTC)                   |
+| quota_kind             | VARCHAR(16)  | NOT NULL, CHECK                          | parse / letter / analysis / proxy_mb  |
+| used                   | INTEGER      | NOT NULL, DEFAULT 0, CHECK ≥ 0           | Израсходовано за сутки                |
+| created_at / updated_at| TIMESTAMPTZ  | DEFAULT now()                            |                                       |
+
+**Индексы:**
+- UNIQUE (user_id, day, quota_kind) — одновременно путь `ON CONFLICT` для
+  атомарного начисления (`INSERT … ON CONFLICT DO UPDATE … WHERE`), поэтому
+  параллельные запросы физически не могут превысить лимит;
+- INDEX (day) — выборка «расход за сутки» для сверки и отчётности.
+
+---
+
+### 3.10. `payment_events` (идемпотентность вебхуков)
+
+Платёжные шлюзы гарантированно повторяют доставку уведомления при отсутствии
+ответа. Ключ `(provider, external_event_id)` гарантирует, что тариф меняется
+**один** раз, даже если событие пришло трижды или два запроса пришли
+одновременно.
+
+| Поле              | Тип          | Ограничения                          | Описание                            |
+|-------------------|--------------|--------------------------------------|-------------------------------------|
+| id                | UUID         | PRIMARY KEY                          |                                     |
+| provider          | VARCHAR(32)  | NOT NULL                             | Платёжный шлюз                      |
+| external_event_id | VARCHAR(128) | NOT NULL                             | ID события у шлюза                  |
+| event_type        | VARCHAR(64)  | NOT NULL                             | Нормализованный тип события         |
+| user_id           | UUID         |                                      | Ссылка на пользователя (nullable)    |
+| tier              | VARCHAR(16)  |                                      | Применённый тариф                   |
+| status            | VARCHAR(16)  | NOT NULL, DEFAULT 'processed', CHECK | processed / ignored / failed        |
+| payload           | JSONB        |                                      | Тело события (аудит)                |
+| created_at        | TIMESTAMPTZ  | DEFAULT now()                        |                                     |
+
+**Индексы:**
+- UNIQUE (provider, external_event_id) — **ключ идемпотентности**;
+- INDEX (user_id).
+
+> `user_id` здесь nullable и **без внешнего ключа**: при удалении аккаунта
+> Privacy Module обезличивает запись (обнуляет ссылку), но сохраняет её.
+> Если бы запись удалялась, повторная доставка вебхука после удаления
+> аккаунта воскресила бы подписку для несуществующего пользователя.
+
+---
+
+### 3.11. `proxy_usage_logs` (учёт прокси-трафика)
+
+Proxy Usage Logger пишет **одну строку на задачу**: объём скачанного трафика,
+число запросов и число встреченных капч. По этим данным считается себестоимость
+парсинга и поднимается предупреждение при доле капчи выше 5 % (docs/04 §9).
+
+| Поле           | Тип         | Ограничения                                            | Описание                |
+|----------------|-------------|--------------------------------------------------------|-------------------------|
+| id             | UUID        | PRIMARY KEY                                            |                         |
+| user_id        | UUID        | NOT NULL, FK → users.id (cascade delete)              | Владелец задачи         |
+| task_id        | UUID        | NOT NULL, FK → tasks.id (cascade delete), UNIQUE       | Задача парсинга         |
+| bytes_total    | BIGINT      | NOT NULL, DEFAULT 0, CHECK ≥ 0                         | Объём трафика, байт     |
+| requests_total | INTEGER     | NOT NULL, DEFAULT 0, CHECK ≥ 0                         | Число ответов           |
+| captcha_total  | INTEGER     | NOT NULL, DEFAULT 0, CHECK ≥ 0 и ≤ requests_total      | Число ответов с капчей  |
+| created_at     | TIMESTAMPTZ | DEFAULT now()                                          |                         |
+
+**Индексы:** UNIQUE (task_id), INDEX (user_id).
+
+> UNIQUE (task_id) делает запись идемпотентной: повтор задачи после снятия
+> капчи обновляет ту же строку, а не создаёт дубль (иначе расход квоты и
+> себестоимость удваивались бы).
+
+---
+
 ## 4. Связи между таблицами
 users 1 ─────── 1 user_profiles
 │
@@ -203,6 +313,16 @@ users 1 ─────── 1 user_profiles
 users 1 ─────── < tasks
 users 1 ─────── < refresh_tokens
 vacancies 1 ─── < tasks (опционально)
+
+# Монетизация и учёт трафика (§3.8–§3.11). Все связи — 1:N от users,
+# каскадные: удаление аккаунта (docs/03 §10) убирает их автоматически.
+users 1 ─────── 0..1 subscriptions
+users 1 ─────── < usage_counters
+users 1 ─────── < proxy_usage_logs
+tasks 1 ─────── 0..1 proxy_usage_logs
+# payment_events связан с пользователем БЕЗ внешнего ключа: при удалении
+# аккаунта запись обезличивается (user_id → NULL), но сохраняется.
+users 1 ─────── < payment_events (без FK, обезличивается)
 text---
 
 ## 5. Статусы вакансий (vacancies.status)

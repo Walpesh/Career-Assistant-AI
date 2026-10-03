@@ -9,6 +9,8 @@
     /letters   — Analysis & Letter Module, письма (§6)
     /tasks     — Queue Manager (§7)
     /ws        — Realtime & Notification Module (§8)
+    /account   — Privacy Module: выгрузка и удаление данных (§10)
+    /billing   — Billing Module: тарифы, квоты, вебхуки (§11)
 
 Proxy & Anti-Ban Module HTTP-эндпоинтов не имеет — внутренний модуль.
 """
@@ -17,7 +19,9 @@ from fastapi import APIRouter
 
 from app.modules.analysis_letter.router import analysis_router, letters_router
 from app.modules.auth.router import router as auth_router
+from app.modules.billing.router import router as billing_router
 from app.modules.parsing.router import router as parsing_router
+from app.modules.privacy.router import router as privacy_router
 from app.modules.queue_manager.router import router as tasks_router
 from app.modules.realtime.router import router as realtime_router
 from app.modules.user_profile.router import router as profile_router
@@ -32,3 +36,5 @@ api_router.include_router(analysis_router)
 api_router.include_router(letters_router)
 api_router.include_router(tasks_router)
 api_router.include_router(realtime_router)
+api_router.include_router(privacy_router)
+api_router.include_router(billing_router)

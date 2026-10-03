@@ -52,6 +52,8 @@ text---
 | **Queue Manager** | Единая очередь задач, контроль параллелизма | Новая задача | Статус задачи + прогресс |
 | **Analysis & Letter Module** | Анализ, матчинг, генерация писем (4 режима) | vacancy_id + режим | analysis + cover_letter + match_score |
 | **Realtime & Notification Module** | Доставка событий на фронтенд | События от всех модулей | WebSocket-сообщения + Fadeout-popup |
+| **Privacy Module** | Доступ к ПД и их удаление | Запрос пользователя на выгрузку/удаление | JSON-пакет ПД / отчёт об удалении |
+| **Billing Module** | Тарифы, суточные квоты, платёжные вебхуки | Задача перед постановкой в очередь, вебхук шлюза | 429 QUOTA_EXCEEDED / обновление тарифа |
 
 ---
 
@@ -59,24 +61,43 @@ text---
 
 ### 4.1. Flow: Добавление вакансий (Parsing Flow)
 1. Frontend → API Gateway (запрос на Автопоиск / Групповой / Ручной)
-2. API Gateway → Parsing Orchestrator
-3. Parsing Orchestrator → Proxy & Anti-Ban Module (получение страниц)
-4. Parsing Orchestrator → Vacancy Storage Module (сохранение + дедупликация)
-5. Vacancy Storage → Queue Manager (опционально ставит задачу на анализ)
-6. Realtime Module → Frontend (прогресс парсинга)
+2. API Gateway → **Billing Module** (списание квоты `parse`; лимит исчерпан → `429 QUOTA_EXCEEDED`, задача не создаётся)
+3. API Gateway → Parsing Orchestrator
+4. Parsing Orchestrator → Proxy & Anti-Ban Module (получение страниц)
+5. Parsing Orchestrator → Vacancy Storage Module (сохранение + дедупликация)
+6. Vacancy Storage → Queue Manager (опционально ставит задачу на анализ)
+7. Parsing Worker → **Proxy Usage Logger** (объём трафика + доля капчи по задаче → `proxy_usage_logs`)
+8. Realtime Module → Frontend (прогресс парсинга)
+
+> Шаг 2 стоит **до** постановки задачи в очередь: иначе пользователь получил бы
+> «висящую» задачу, которую воркер тут же отклонит по лимиту.
 
 ### 4.2. Flow: Анализ и генерация письма (Analysis Flow)
 1. Frontend → API Gateway (выбор режима: Только Анализ / Только Письмо / Анализ+Письмо / AUTO)
-2. API Gateway → Queue Manager
-3. Queue Manager → LLM Worker (строго последовательно)
-4. LLM Worker → Analysis & Letter Module
-5. Analysis & Letter Module → Vacancy Storage (сохранение результатов + смена статуса)
-6. Realtime Module → Frontend (прогресс + готовый результат)
+2. API Gateway → **Billing Module** (квоты `analysis` и, для режимов с письмом, `letter`)
+3. API Gateway → Queue Manager
+4. Queue Manager → LLM Worker (строго последовательно)
+5. LLM Worker → Analysis & Letter Module
+6. Analysis & Letter Module → Vacancy Storage (сохранение результатов + смена статуса)
+7. Realtime Module → Frontend (прогресс + готовый результат)
 
 ### 4.3. Flow: Обновление профиля и конвертация резюме
 1. Frontend → User Profile Module
-2. При нажатии «Конвертировать» → Queue Manager → LLM Worker
+2. При нажатии «Конвертировать» → Billing Module (квота `analysis`) → Queue Manager → LLM Worker
 3. Результат сохраняется как `compact_resume`
+
+### 4.4. Flow: Оплата тарифа (Billing Flow)
+1. Платёжный шлюз → `POST /api/v1/billing/webhook/{provider}` (без Bearer, по подписи)
+2. Billing Module → проверка подписи HMAC (YooKassa / CloudPayments / Stripe)
+3. Billing Module → резервирование ключа идемпотентности `(provider, external_event_id)`
+4. Billing Module → обновление `subscriptions` (тариф, статус, период)
+5. Повторная доставка того же события → `duplicate`, тариф не меняется
+
+### 4.5. Flow: Доступ и удаление персональных данных (Privacy Flow)
+1. Frontend → `GET /api/v1/account/export` → JSON-пакет всех ПД пользователя
+2. Frontend → `GET /api/v1/account/summary` → объём данных до удаления
+3. Frontend → `DELETE /api/v1/account` → каскадное удаление всех связанных строк
+4. Privacy Module → отчёт по количеству удалённых строк в каждой таблице
 
 ---
 

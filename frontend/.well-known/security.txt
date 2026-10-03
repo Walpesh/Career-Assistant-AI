@@ -1,0 +1,25 @@
+# security.txt — RFC 9116 (https://securitytxt.org/)
+#
+# Публичный канал связи для исследователей безопасности. Файл обязан быть
+# доступен без авторизации, поэтому в robots.txt для него оставлен Allow.
+# Размещение — /.well-known/security.txt, как предписывает RFC 9116 §2.
+
+Contact: mailto:security@career-assistant-ai.example
+Expires: 2027-12-31T23:59:59.000Z
+Preferred-Languages: ru, en
+
+# Набор проверяемых версий ПО. Показываем мажорную ветку и редакцию
+# документации безопасности: отдавать точные билды необязательно, но
+# отчёт о проблеме без версии почти невозможно triage-ить.
+Canonical: https://career-assistant-ai.example/.well-known/security.txt
+Policy: https://career-assistant-ai.example/legal/privacy
+
+# Явно перечислены векторы, которые просим проверять в первую очередь:
+# 1) авторизация — обход IDOR между пользователями;
+# 2) Privacy Module — извлечение чужих данных через /account/*;
+# 3) Billing Module — подмена тарифа через вебхук без верной подписи.
+Hiring: https://career-assistant-ai.example/about
+
+# Ответственное раскрытие: безопасность важнее NDA — о найденной уязвимости
+# можно сообщить анонимно, без раскрытия деталей публично.
+Acknowledgments: https://career-assistant-ai.example/security/thanks

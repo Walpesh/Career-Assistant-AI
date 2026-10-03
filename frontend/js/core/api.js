@@ -163,5 +163,55 @@ export const api = {
   listTasks: () => request('GET', '/tasks'),
   getTask: (id) => request('GET', `/tasks/${encodeURIComponent(id)}`),
   cancelTask: (id) => request('POST', `/tasks/${encodeURIComponent(id)}/cancel`),
-  resumeTask: (id) => request('POST', `/tasks/${encodeURIComponent(id)}/resume`)
+  resumeTask: (id) => request('POST', `/tasks/${encodeURIComponent(id)}/resume`),
+
+  /* --- Privacy (docs/03 §10: 152-ФЗ ст. 14/21) --- */
+  // Выгрузка отдаётся как вложение (Content-Disposition), поэтому ответ
+  // забирается напрямую fetch'ем, а не через request(): нужны blob и имя файла.
+  exportAccountData: async () => {
+    const response = await fetch(`${CONFIG.API_BASE}/account/export`, {
+      headers: { ...sessionHeaders(), Accept: 'application/json' },
+      credentials: 'include'
+    });
+    if (!response.ok) {
+      let detail = response.statusText;
+      let errorCode = null;
+      try {
+        const data = await response.json();
+        detail = data?.detail || detail;
+        errorCode = data?.error_code || null;
+      } catch {
+        /* тело не JSON — оставляем statusText */
+      }
+      throw new ApiError(response.status, detail, errorCode);
+    }
+    const blob = await response.blob();
+    return { blob, filename: exportFilename(response.headers.get('content-disposition')) };
+  },
+
+  accountSummary: () => request('GET', '/account/summary'),
+  deleteAccount: () => request('DELETE', '/account'),
+
+  /* --- Billing (docs/03 §11) --- */
+  billingTiers: () => request('GET', '/billing/tiers', undefined, { skipAuth: true }),
+  billingUsage: () => request('GET', '/billing/usage'),
+  billingSubscription: () => request('GET', '/billing/subscription')
 };
+
+/** Заголовки авторизации (access-токен хранится только в памяти). */
+function sessionHeaders() {
+  const headers = {};
+  const token = session.accessToken;
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return headers;
+}
+
+/**
+ * Имя файла из заголовка Content-Disposition.
+ * @param {string|null} header
+ * @returns {string}
+ */
+function exportFilename(header) {
+  const match = /filename="?([^";]+)"?/i.exec(header || '');
+  return match ? match[1] : 'career-assistant-data-export.json';
+}

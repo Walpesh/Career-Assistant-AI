@@ -103,6 +103,19 @@ export function initAuth(callback) {
       return;
     }
 
+    // Согласие на обработку ПД обязательно (152-ФЗ ст. 9): без него запрос
+    // не отправляется вообще. Проверка идёт на клиенте для быстрой обратной
+    // связи, но серверная валидация остаётся обязательной на уровне API.
+    const consent = document.getElementById('register-consent');
+    if (!consent?.checked) {
+      popup.warning(
+        'Нужно согласие на обработку данных',
+        'Отметьте согласие с условиями обработки персональных данных.'
+      );
+      consent?.focus();
+      return;
+    }
+
     const button = document.getElementById('register-submit');
     setLoading(button, true);
     try {

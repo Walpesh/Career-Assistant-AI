@@ -121,6 +121,9 @@ class AntiBanSession:
         self.request_count = 0  # отправлено запросов (включая прогрев/ретраи)
         self.response_count = 0  # получено ответов
         self.captcha_count = 0  # срабатываний капчи (доля для docs/04 §9)
+        #: Суммарный объём скачанного трафика, байт — Proxy Usage Logger
+        #: (учёт себестоимости прокси, docs/02 §3.11).
+        self.bytes_total = 0
 
     # --- статистика (docs/04 §9) ---------------------------------------------
     @property
@@ -187,6 +190,10 @@ class AntiBanSession:
             consecutive_404=self.consecutive_404,
         )
         self.response_count += 1
+        # Учёт трафика: тело ответа в UTF-8 — именно столько байт ушло через
+        # прокси. Считается здесь, в единственном месте классификации, чтобы
+        # ни один путь (200/429/капча) не был учтён дважды или пропущен.
+        self.bytes_total += len((getattr(response, "text", "") or "").encode("utf-8"))
         inc_fetch_total(detection.kind.value)
         if detection.kind is ThreatKind.CAPTCHA:
             self.captcha_count += 1

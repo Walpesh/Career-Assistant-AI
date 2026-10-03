@@ -28,6 +28,8 @@ from app.core.errors import AppError
 from app.db.models import Analysis, CoverLetter, Task
 from app.db.session import get_db
 from app.modules.auth.deps import get_current_user
+from app.modules.billing.middleware import quota_consumed
+from app.modules.billing.tiers import QuotaKind
 from app.modules.queue_manager.queues import QueueUnavailable, enqueue_task
 from app.modules.realtime.bus import publish_event
 from app.modules.vacancy_storage.service import get_user_vacancy
@@ -124,6 +126,14 @@ async def run_analysis(
     # Тип задачи соответствует режиму (docs/02 §3.6, фронтенд docs/03 §6):
     # analyze → analyze, letter → generate_letter, остальное → auto_full.
     task_type = _TASK_TYPE_BY_MODE.get(payload.mode, "auto_full")
+
+    # Списание квот ДО постановки задачи в очередь (docs/03 §11). Режим
+    # определяет, какие квоты тратятся: анализ — ANALYSIS, письмо — LETTER.
+    # Порядок важен: начисление идёт после проверки владения вакансиями
+    # (иначе 404 по чужой вакансии «съедал» бы квоту).
+    await quota_consumed(db, user, QuotaKind.ANALYSIS, len(payload.vacancy_ids))
+    if payload.mode in ("letter", "analyze_and_letter", "auto"):
+        await quota_consumed(db, user, QuotaKind.LETTER, len(payload.vacancy_ids))
 
     # UUID не сериализуются в JSONB — payload задачи храним в строках.
     task_payload = {

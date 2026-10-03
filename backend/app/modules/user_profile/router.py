@@ -19,11 +19,13 @@ from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import AppError
 from app.core.config import settings
+from app.core.errors import AppError
 from app.db.models import Task, User, UserProfile
 from app.db.session import get_db
 from app.modules.auth.deps import get_current_user
+from app.modules.billing.middleware import quota_consumed
+from app.modules.billing.tiers import QuotaKind
 from app.modules.queue_manager.queues import QueueUnavailable, enqueue_task
 from app.modules.realtime.bus import publish_event
 from app.modules.user_profile.llm import LLMError, compress_resume_text, trim_to_limit
@@ -154,6 +156,10 @@ async def convert_resume(
             "Сначала заполните resume_text — сжимать нечего",
             "RESUME_EMPTY",
         )
+
+    # Сокращение резюме — LLM-операция, поэтому тратит квоту анализа.
+    # Списание до постановки задачи: 429 отдаётся синхронно (docs/03 §11).
+    await quota_consumed(db, user, QuotaKind.ANALYSIS)
 
     task = Task(
         user_id=user.id,

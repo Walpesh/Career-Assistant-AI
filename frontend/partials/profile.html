@@ -151,6 +151,71 @@
     </p>
   </section>
 
+  <!--
+      Приватность и данные аккаунта (TASK «Privacy Compliance», docs/03 §10).
+      Реализация прав по 152-ФЗ ст. 14/21 прямо в интерфейсе: выгрузка пакета
+      данных и безвозвратное удаление аккаунта. Кнопки намеренно собраны в
+      отдельной секции внизу — это не обычные настройки профиля, а действия
+      с необратимыми последствиями.
+  -->
+  <section class="card p-5">
+    <h3 class="card-title">Приватность и данные</h3>
+    <p class="hint mt-1">
+      Мы храним резюме, собранные вакансии, анализы и письма. Вы можете получить
+      все данные файлом или удалить аккаунт вместе с ними — безвозвратно.
+    </p>
+
+    <!-- Показатели: сколько данных будет удалено (GET /account/summary). -->
+    <dl id="account-summary" class="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+      <div class="rounded-lg border border-slate-800 bg-slate-950/50 p-2">
+        <dt class="text-slate-500">Вакансии</dt>
+        <dd id="account-sum-vacancies" class="mt-0.5 text-base font-semibold tabular-nums text-slate-200">—</dd>
+      </div>
+      <div class="rounded-lg border border-slate-800 bg-slate-950/50 p-2">
+        <dt class="text-slate-500">Задачи</dt>
+        <dd id="account-sum-tasks" class="mt-0.5 text-base font-semibold tabular-nums text-slate-200">—</dd>
+      </div>
+      <div class="rounded-lg border border-slate-800 bg-slate-950/50 p-2">
+        <dt class="text-slate-500">Сессии</dt>
+        <dd id="account-sum-refresh-tokens" class="mt-0.5 text-base font-semibold tabular-nums text-slate-200">—</dd>
+      </div>
+      <div class="rounded-lg border border-slate-800 bg-slate-950/50 p-2">
+        <dt class="text-slate-500">Тариф</dt>
+        <dd id="account-sum-tier" class="mt-0.5 text-base font-semibold text-slate-200">—</dd>
+      </div>
+    </dl>
+
+    <!-- Квоты тарифа: сколько операций осталось сегодня (GET /billing/usage). -->
+    <div class="mt-4">
+      <div class="mb-2 flex items-center justify-between gap-3">
+        <h4 class="text-xs font-semibold uppercase tracking-wide text-slate-400">Суточные лимиты</h4>
+        <span id="billing-resets-at" class="text-xs text-slate-500">—</span>
+      </div>
+      <ul id="billing-quotas" class="space-y-1.5" role="list">
+        <li class="hint">Загрузка лимитов…</li>
+      </ul>
+      <a href="/legal/terms.html" target="_blank" rel="noopener"
+         class="mt-3 inline-block text-xs text-indigo-400 underline underline-offset-2 hover:text-indigo-300">
+        Тарифы и условия использования
+      </a>
+    </div>
+
+    <div class="mt-4 flex flex-wrap gap-2 border-t border-slate-800 pt-4">
+      <button id="btn-export-data" type="button" class="btn-secondary btn-sm">
+        <span class="hidden h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-400/30 border-t-slate-300" data-spinner></span>
+        <span>Скачать мои данные</span>
+      </button>
+      <button id="btn-delete-account" type="button" class="btn-danger btn-sm">
+        <span class="hidden h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" data-spinner></span>
+        <span>Удалить аккаунт</span>
+      </button>
+    </div>
+
+    <p class="hint mt-2">
+      Вопросы по обработке данных: <a class="text-indigo-400 underline underline-offset-2" href="/legal/privacy.html" target="_blank" rel="noopener">политика конфиденциальности</a>.
+    </p>
+  </section>
+
   <!-- Панель сохранения -->
   <div class="sticky bottom-20 z-10 lg:bottom-4">
     <div class="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-800 bg-slate-900/95 p-3 shadow-2xl backdrop-blur">
