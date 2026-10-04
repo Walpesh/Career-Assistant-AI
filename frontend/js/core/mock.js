@@ -651,4 +651,66 @@ export function installMock() {
     emitWs('task.resumed', { task_id: task.id, status: 'pending' });
     return { task_id: task.id, status: 'pending', resumed: true };
   };
+
+  /* Privacy (docs/03 §10) и Billing (docs/03 §11).
+
+     Без этих заглушек демо-режим обращался бы к реальному API: при запуске
+     одного лишь статического сервера (например, в E2E-пайплайне) вкладка
+     «Моё резюме» получала бы ERR_CONNECTION_REFUSED и показывала ошибку
+     вместо данных. Форма ответов повторяет контракт бэкенда.
+  */
+  api.accountSummary = async () => {
+    await sleep(180);
+    return {
+      user_id: DEMO_USER.id,
+      email: DEMO_USER.email,
+      vacancies: VACANCIES.length,
+      tasks: TASKS.length,
+      refresh_tokens: 1,
+      analyses: Object.keys(ANALYSES).length,
+      cover_letters: Object.keys(LETTERS).length
+    };
+  };
+
+  api.billingTiers = async () => {
+    await sleep(120);
+    return {
+      active_tier: 'free',
+      tiers: [
+        { id: 'free', name: 'Free', daily: { parse: 5, letter: 10, analysis: 30, proxy_mb: 200 } },
+        { id: 'pro', name: 'Pro', daily: { parse: 50, letter: 200, analysis: 1000, proxy_mb: 5000 } },
+        { id: 'enterprise', name: 'Enterprise', daily: { parse: -1, letter: -1, analysis: -1, proxy_mb: -1 } }
+      ]
+    };
+  };
+
+  api.billingUsage = async () => {
+    await sleep(180);
+    const tomorrow = new Date(Date.now() + 86400000).toISOString();
+    return {
+      tier: 'free',
+      day: new Date().toISOString().slice(0, 10),
+      resets_at: tomorrow,
+      quotas: {
+        parse: { used: 1, limit: 5, remaining: 4, unlimited: false, resets_at: tomorrow },
+        letter: { used: 0, limit: 10, remaining: 10, unlimited: false, resets_at: tomorrow },
+        analysis: { used: 2, limit: 30, remaining: 28, unlimited: false, resets_at: tomorrow },
+        proxy_mb: { used: 0, limit: 200, remaining: 200, unlimited: false, resets_at: tomorrow }
+      }
+    };
+  };
+
+  api.billingSubscription = async () => {
+    await sleep(150);
+    return { tier: 'free', status: 'active', renews_at: null };
+  };
+
+  // Удаление аккаунта в демо-режиме необратимо «обнуляет» данные: полная
+  // симуляция каскадного удаления здесь не нужна, достаточно сбросить набор.
+  api.deleteAccount = async () => {
+    await sleep(300);
+    VACANCIES.length = 0;
+    TASKS.length = 0;
+    return { deleted: true, report: {}, message: 'Аккаунт и данные демо-режима очищены.' };
+  };
 }

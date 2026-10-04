@@ -328,6 +328,8 @@ async function convertResume() {
 
 function setConvertLoading(loading) {
   toggleLoading(els.convertButton, loading);
+}
+
 /* ---------- Приватность и квоты (docs/03 §10–§11) ---------- */
 
 /** Подписи видов квот: ключи приходят из backend (QuotaKind). */
@@ -460,7 +462,6 @@ async function deleteAccount() {
     toggleLoading(els.deleteButton, false);
     popup.error('Не удалось удалить аккаунт', error.message);
   }
-}
 }
 
 function toggleLoading(button, loading) {

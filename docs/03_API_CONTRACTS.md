@@ -123,6 +123,17 @@ Queue Manager (docs/04 §6) и отвечает **202**:
 | GET | `/vacancies/{vacancy_id}` | Детальная информация о вакансии | Да |
 | DELETE | `/vacancies/{vacancy_id}` | Удалить вакансию | Да |
 | PATCH | `/vacancies/{vacancy_id}/status` | Изменить статус (например, applied) | Да |
+| POST | `/vacancies/manual` | Ручное добавление по прямой ссылке hh.ru | Да |
+
+### POST /vacancies/manual
+
+Тело: `{ "vacancy_url": "https://hh.ru/vacancy/<id>" }`. Эндпоинт ставит
+задачу `parse_manual` в очередь парсинга (docs/04 §4.3) и возвращает
+`202 { task_id, status: "pending" }`.
+
+Ошибки: `400 INVALID_VACANCY_URL` (ссылка не на hh.ru/vacancy/&lt;id&gt;),
+`409 EMAIL_TAKEN`-подобные конфликты не применяются; `503 QUEUE_UNAVAILABLE`,
+если Redis недоступен (задача переводится в `failed`).
 
 ### Фильтры для GET /vacancies
 - `status` — raw / analyzed / letter_ready / applied / error
