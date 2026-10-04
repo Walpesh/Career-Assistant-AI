@@ -146,7 +146,62 @@
             </span>
           </label>
 
-          <p class="hint">После регистрации войдите с указанными данными.</p>
+          <p class="hint">После подтверждения email мы отправим код из 6 цифр — введите его, чтобы войти.</p>
+        </form>
+
+        <!--
+            Шаг 2 регистрации: подтверждение email шестизначным кодом
+            (docs/03_API_CONTRACTS.md §2 — POST /auth/verify-email).
+
+            Поля ввода отдельные input'ы, а не один текстовый: иначе нельзя
+            показать «крупный» код, как в мобильных приложениях, и нельзя
+            управлять фокусом по цифрам (auth.js). Разметка однотипная,
+            чтобы не расходилась с JS-шаблоном.
+
+            aria: группа с role=group и aria-labelledby, у каждого поля
+            aria-label «Цифра N из 6» и inputmode=numeric — скринридер
+            читает позицию, а мобильная клавиатура показывает цифры.
+        -->
+        <form id="verify-form" class="hidden space-y-4" novalidate>
+          <div class="rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-4 py-3">
+            <p class="text-sm font-semibold text-indigo-200">Подтвердите email</p>
+            <p class="mt-1 text-xs leading-relaxed text-indigo-200/80">
+              Мы отправили 6-значный код на <span id="verify-email" class="font-semibold text-indigo-100"></span>.
+              Код действует 10 минут.
+            </p>
+          </div>
+
+          <div role="group" aria-labelledby="verify-code-label" class="pt-1">
+            <span id="verify-code-label" class="mb-2 block text-xs font-medium text-slate-400">
+              Код подтверждения
+            </span>
+            <div id="otp-inputs" class="flex justify-between gap-1.5 sm:gap-2"></div>
+            <p class="mt-2 text-[11px] text-slate-500">
+              Вставьте код целиком — остальные цифры подставятся сами.
+            </p>
+          </div>
+
+          <button id="verify-submit" type="submit" class="btn-primary w-full">
+            <span class="hidden h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" data-spinner></span>
+            <span>Подтвердить и войти</span>
+          </button>
+
+          <!--
+              Повторная отправка кода ограничена сервером (1 раз в 60 сек на
+              email, docs/03 §2), поэтому кнопка считает секунды до следующей
+              попытки и остаётся disabled — иначе пользователь получал бы 429.
+              aria-live сообщает обратный отсчёт, но не на каждой секунде.
+          -->
+          <div class="flex items-center justify-between gap-3 pt-1">
+            <button id="resend-code" type="button" class="btn-ghost text-xs">
+              Отправить код повторно
+            </button>
+            <span id="resend-timer" class="text-xs text-slate-500" role="status" aria-live="polite"></span>
+          </div>
+
+          <button id="verify-back" type="button" class="w-full text-center text-xs text-slate-500 hover:text-slate-300">
+            ← Вернуться к регистрации
+          </button>
         </form>
       </div>
 

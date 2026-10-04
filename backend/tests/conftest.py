@@ -10,6 +10,11 @@
 ``run_llm_task`` вызываются напрямую с контекстом, а постановка задачи в
 очередь проверяется через пул-заглушку RecordingPool. Это покрывает и
 маршрутизацию в очередь, и исполнение, и запись состояния в БД.
+
+Письма с OTP-кодом в тестах не отправляются: автофикстура ``_capture_otp``
+подменяет ``app.core.mail.send_verification_email`` на запись кода в
+``OTP_OUTBOX`` (email → код). Тесты получают код оттуда и подтверждают email
+через настоящий POST /auth/verify-email.
 """
 
 from __future__ import annotations
@@ -38,6 +43,16 @@ from app.modules.queue_manager.queues import (
 )
 from app.modules.queue_manager.slots import InProcessQueueSlots
 from app.modules.queue_manager.worker import run_llm_task, run_parsing_task
+
+#: «Почтовый ящик» тестов: email → последний выданный 6-значный OTP-код.
+#: Заполняется автофикстурой ``_capture_otp`` вместо реальной отправки SMTP.
+OTP_OUTBOX: dict[str, str] = {}
+
+#: Префикс API (docs/03_API_CONTRACTS.md §1).
+API = settings.api_prefix
+
+#: Стандартный пароль тестовых пользователей.
+PASSWORD = "strongpassword"
 
 # --- URL'ы: dev-BD из настроек → test-BD рядом (только имя меняется) ---
 _BASE_URL = settings.database_url.rsplit("/", 1)[0]
@@ -100,6 +115,9 @@ async def client(engine, queue_pool):
     app.dependency_overrides[get_db] = override_get_db
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://testserver") as test_client:
+        # Фабрика нужна помощникам, которые правят БД мимо API (например,
+        # отзыв сессии, созданной подтверждением email).
+        test_client.test_session_factory = test_session_factory
         yield test_client
     app.dependency_overrides.clear()
 
@@ -110,6 +128,104 @@ async def _clean_tables(engine):
     yield
     async with engine.begin() as conn:
         await conn.execute(text("TRUNCATE TABLE users RESTART IDENTITY CASCADE"))
+        # email_otps не имеет FK на users — чистим явно, иначе код прошлого
+        # теста остался бы в БД и следующий тест получил бы чужой OTP.
+        await conn.execute(text("TRUNCATE TABLE email_otps"))
+
+
+@pytest.fixture(autouse=True)
+def _capture_otp(monkeypatch):
+    """Перехватывать отправку писем: код кладётся в OTP_OUTBOX.
+
+    SMTP в тестах не используется (ни реального сервера, ни его отсутствия):
+    подменяется сама отправка, поэтому тест работает и при настроенном
+    ``SMTP_HOST``, и без него. ``BackgroundTasks`` выполняются Starlette
+    до возврата ответа тестовому клиенту, поэтому код доступен сразу после
+    POST /auth/register.
+    """
+    from app.core import mail as mail_module
+
+    async def _fake_send(email: str, code: str, **_: object) -> bool:
+        OTP_OUTBOX[email.strip().lower()] = code
+        return True
+
+    monkeypatch.setattr(mail_module, "send_verification_email", _fake_send)
+    OTP_OUTBOX.clear()
+    yield OTP_OUTBOX
+    OTP_OUTBOX.clear()
+
+
+# --- Общие помощники регистрации с подтверждением email ---------------------
+# Тесты, которым нужен «обычный» авторизованный пользователь, не должны
+# повторять связку register → OTP → login: после введения верификации
+# login не выдаёт токены неподтверждённому аккаунту (docs/03 §2).
+
+
+async def confirm_email(client, email: str, code: str | None = None) -> dict:
+    """Подтвердить email выданным OTP-кодом → тело ответа verify-email."""
+    target = email.strip().lower()
+    actual = code or OTP_OUTBOX.get(target)
+    assert actual, f"OTP-код для {target} не был «отправлен» (OTP_OUTBOX пуст)"
+    response = await client.post(
+        f"{API}/auth/verify-email", json={"email": email, "code": actual}
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+async def register_verified(client, email: str, password: str = PASSWORD) -> dict:
+    """Полный флоу нового пользователя: register → OTP → пара JWT.
+
+    Заменяет старую связку register + login во всех тестах, которым не нужно
+    отдельно проверять поведение неподтверждённого аккаунта.
+    """
+    response = await client.post(
+        f"{API}/auth/register", json={"email": email, "password": password}
+    )
+    assert response.status_code == 201, response.text
+    return await confirm_email(client, email)
+
+
+async def auth_headers_for(
+    client, email: str | None = None, password: str = PASSWORD
+) -> dict[str, str]:
+    """Зарегистрировать (при необходимости) и вернуть заголовок Bearer JWT."""
+    target = email or f"t{uuid.uuid4().hex[:10]}@test.dev"
+    tokens = await register_verified(client, target, password)
+    return {"Authorization": f"Bearer {tokens['access_token']}"}
+
+
+async def user_id_for(client, headers: dict[str, str]) -> str:
+    """id текущего пользователя по Bearer-заголовку (GET /auth/me)."""
+    response = await client.get(f"{API}/auth/me", headers=headers)
+    assert response.status_code == 200, response.text
+    return response.json()["id"]
+
+
+async def register_verified_without_session(
+    client, email: str, password: str = PASSWORD
+) -> str:
+    """register → OTP → подтверждение, затем отзыв сессии. Возвращает user_id.
+
+    Подтверждение email само по себе выдаёт refresh-токен (docs/03 §2), поэтому
+    после ``register_verified`` у пользователя есть одна «лишняя» сессия.
+    Тестам, которые считают сессии (ротация, revoke-all, реестр
+    ``refresh_tokens``), она мешает — этот помощник возвращает БД в состояние
+    «ноль активных сессий», как было до введения верификации.
+
+    Сессия отзывается напрямую в БД через фабрику тестового клиента, поэтому
+    отзыв всегда попадает в тестовую, а не в дефолтную БД.
+    """
+    from app.modules.auth.security import TOKEN_TYPE_ACCESS, decode_token
+    from app.modules.auth.tokens import revoke_all_user_tokens
+
+    tokens = await register_verified(client, email, password)
+    user_id = decode_token(tokens["access_token"], expected_type=TOKEN_TYPE_ACCESS)["sub"]
+
+    async with client.test_session_factory() as session:
+        await revoke_all_user_tokens(session, uuid.UUID(user_id))
+        await session.commit()
+    return user_id
 
 
 @pytest.fixture(autouse=True)

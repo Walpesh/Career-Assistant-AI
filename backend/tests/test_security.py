@@ -243,10 +243,10 @@ async def test_login_rate_limit_returns_429(client, redis_client, monkeypatch):
 
 
 async def _register_and_login(client, email: str) -> dict:
-    await client.post(f"{API}/auth/register", json={"email": email, "password": PASSWORD})
-    response = await client.post(f"{API}/auth/login", json={"email": email, "password": PASSWORD})
-    assert response.status_code == 200, response.text
-    return response.json()
+    """Регистрация + подтверждение email → пара JWT (docs/03 §2)."""
+    from conftest import register_verified
+
+    return await register_verified(client, email, PASSWORD)
 
 
 async def test_refresh_sets_httponly_cookie_and_rotates(client):

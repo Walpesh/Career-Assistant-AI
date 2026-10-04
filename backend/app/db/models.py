@@ -44,6 +44,7 @@ from app.db.base import Base, TimestampMixin
 
 __all__ = [
     "User",
+    "EmailOtp",
     "UserProfile",
     "Vacancy",
     "Analysis",
@@ -72,6 +73,11 @@ class User(Base, TimestampMixin):
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("true")
+    )
+    #: Email подтверждён 6-значным OTP-кодом (ТЗ: до подтверждения
+    #: POST /auth/login отвечает 403 EMAIL_NOT_VERIFIED).
+    is_verified: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
     )
 
     profile: Mapped[UserProfile | None] = relationship(
@@ -410,6 +416,43 @@ class RefreshToken(Base, TimestampMixin):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     user: Mapped[User] = relationship(back_populates="refresh_tokens")
+
+
+class EmailOtp(Base, TimestampMixin):
+    """Активный 6-значный OTP-код подтверждения email (ТЗ «Email OTP»).
+
+    Хранится только HMAC-SHA256-хэш кода (otp_code_hash): сам код после
+    генерации уходит в письмо и нигде не пишется. Поля:
+
+    * email          — одна активная запись на email (unique);
+    * otp_code_hash  — хэш кода, связанный с email (mail.hash_otp_code);
+    * expires_at     — TTL 10 минут (settings.otp_ttl_minutes);
+    * attempts_count — неверные попытки (максимум settings.otp_max_attempts = 5);
+    * created_at     — момент последней отправки: он же rate-limit resend
+      (1 запрос / 60 сек на email, settings.otp_resend_interval_seconds).
+    """
+
+    __tablename__ = "email_otps"
+    __table_args__ = (
+        CheckConstraint(
+            "attempts_count >= 0",
+            name="ck_email_otps_attempts_non_negative",
+        ),
+        Index("ux_email_otps_email", "email", unique=True),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()"),
+    )
+    email: Mapped[str] = mapped_column(String(255), nullable=False)
+    otp_code_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    attempts_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
 
 
 class UsageCounter(Base, TimestampMixin):

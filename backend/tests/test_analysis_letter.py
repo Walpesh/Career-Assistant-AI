@@ -662,19 +662,16 @@ API = "/api/v1"
 
 
 async def _register_and_login(client, email: str) -> tuple[str, dict]:
-    """Регистрация + вход через API → (user_id, auth-заголовки)."""
-    response = await client.post(
-        f"{API}/auth/register", json={"email": email, "password": "strongpassword"}
-    )
-    assert response.status_code == 201, response.text
-    user_id = response.json()["id"]
+    """Регистрация + подтверждение email → (user_id, auth-заголовки).
 
-    response = await client.post(
-        f"{API}/auth/login", json={"email": email, "password": "strongpassword"}
-    )
-    assert response.status_code == 200, response.text
-    headers = {"Authorization": f"Bearer {response.json()['access_token']}"}
-    return user_id, headers
+    Токены выдаёт POST /auth/verify-email: до подтверждения email вход
+    запрещён (docs/03 §2), поэтому «регистрация + login» больше не работает.
+    """
+    from conftest import register_verified, user_id_for
+
+    tokens = await register_verified(client, email, "strongpassword")
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+    return await user_id_for(client, headers), headers
 
 
 async def _seed_vacancy_with_results(engine, user_id, *, status: str = "letter_ready"):

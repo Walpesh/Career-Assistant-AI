@@ -34,6 +34,7 @@ Headless-режим для CI:
     LOAD_TEST_API_PREFIX      префикс API (default: /api/v1)
     LOAD_TEST_EMAIL_DOMAIN    домен регистрации (default: load.test)
     LOAD_TEST_PASSWORD        пароль (default: strongpassword)
+    LOAD_TEST_OTP_CODE        6-значный код подтверждения email (default: 000000)
     LOAD_TEST_MODE            ``readonly`` (только чтение) или ``write``
 
 ВНИМАНИЕ: режим ``write`` создаёт данные и списывает суточные квоты —
@@ -51,6 +52,11 @@ API = os.environ.get("LOAD_TEST_API_PREFIX", "/api/v1")
 EMAIL_DOMAIN = os.environ.get("LOAD_TEST_EMAIL_DOMAIN", "load.test")
 PASSWORD = os.environ.get("LOAD_TEST_PASSWORD", "strongpassword")
 READ_ONLY = os.environ.get("LOAD_TEST_MODE", "readonly").strip().lower() == "readonly"
+
+#: OTP-код подтверждения email (docs/03 §2). Регистрация двухшаговая: код
+#: приходит письмом, поэтому для нагрузочного прогона он задаётся явно
+#: (в dev без SMTP он печатается в лог приложения).
+OTP_CODE = os.environ.get("LOAD_TEST_OTP_CODE", "000000")
 
 #: Типы задач, исполняемых LLM-очередью (docs/02 §3.6, docs/04 §6).
 LLM_TASK_TYPES = frozenset({"analyze", "generate_letter", "auto_full", "convert_resume"})
@@ -96,7 +102,7 @@ class CareerAssistantUser(HttpUser):
     wait_time = between(0.5, 1.5) if READ_ONLY else between(0.0, 0.0)
 
     def on_start(self):
-        """Регистрация, вход и подготовка вакансии для анализа."""
+        """Регистрация, подтверждение email и подготовка вакансии для анализа."""
         self.token: str | None = None
         self.user_id: str | None = None
         self.vacancy_ids: list[str] = []
@@ -121,13 +127,14 @@ class CareerAssistantUser(HttpUser):
             if response.status_code != 201:
                 response.failure(f"unexpected {response.status_code}")
                 return
-            self.user_id = response.json()["id"]
+            # Register не выдаёт JWT: аккаунт нужно подтвердить OTP-кодом
+            # (docs/03 §2), иначе login вернёт 403 EMAIL_NOT_VERIFIED.
             response.success()
 
         with self.client.post(
-            f"{API}/auth/login",
-            json={"email": email, "password": PASSWORD},
-            name="POST /auth/login",
+            f"{API}/auth/verify-email",
+            json={"email": email, "code": OTP_CODE},
+            name="POST /auth/verify-email",
             catch_response=True,
         ) as response:
             if response.status_code != 200:

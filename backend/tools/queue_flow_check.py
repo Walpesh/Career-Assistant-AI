@@ -36,6 +36,12 @@ WS_URL = f"ws://127.0.0.1:{PORT}/api/v1/ws"
 PASSWORD = "pass12345"
 VACANCY_URL = "https://hh.ru/vacancy/137866214"
 
+#: OTP-код подтверждения email (docs/03 §2). Обязателен: скрипт работает
+#: против живого сервера, а код приходит письмом (или пишется в лог, если
+#: SMTP не настроен). Пример запуска:
+#:     CA_OTP_CODE=123456 python -m tools.queue_flow_check
+OTP_CODE = os.environ.get("CA_OTP_CODE", "")
+
 #: Сколько секунд ждать завершения задачи и событий.
 TASK_TIMEOUT = 120.0
 
@@ -44,15 +50,28 @@ def log(message: str) -> None:
     print(f"[queue-flow] {message}", flush=True)
 
 
-async def register_and_login(client: httpx.AsyncClient) -> str:
-    """Регистрация + вход, вернуть access_token (docs/03 §2)."""
+async def register_and_login(client: httpx.AsyncClient, code: str | None = None) -> str:
+    """Регистрация + подтверждение email → access_token (docs/03 §2).
+
+    Токены выдаёт POST /auth/verify-email: до подтверждения email вход
+    запрещён (403 EMAIL_NOT_VERIFIED). ``code`` обязателен — скрипт идёт
+    против живого сервера, поэтому код берётся из письма или из лога
+    (в dev-режиме без SMTP код пишется в лог приложения).
+    """
     payload = {"email": f"qflow{uuid.uuid4().hex[:10]}@test.dev", "password": PASSWORD}
     registered = await client.post("/api/v1/auth/register", json=payload)
     if registered.status_code not in (200, 201):
         raise RuntimeError(f"register failed: {registered.status_code} {registered.text}")
-    logged_in = await client.post("/api/v1/auth/login", json=payload)
-    logged_in.raise_for_status()
-    return logged_in.json()["access_token"]
+    if not code:
+        raise RuntimeError(
+            "нужен OTP-код: проверка идёт против живого сервера — возьмите "
+            "6 цифр из письма или из лога приложения"
+        )
+    verified = await client.post(
+        "/api/v1/auth/verify-email", json={"email": payload["email"], "code": code}
+    )
+    verified.raise_for_status()
+    return verified.json()["access_token"]
 
 
 async def collect_ws_events(token: str, task_id: str, events: list[dict]) -> None:
@@ -118,8 +137,8 @@ def describe_queues(task_id: str) -> str:
 
 async def main() -> int:
     async with httpx.AsyncClient(base_url=BASE_URL, timeout=30.0) as client:
-        token = await register_and_login(client)
-        log("пользователь зарегистрирован, токен получен")
+        token = await register_and_login(client, OTP_CODE)
+        log("пользователь зарегистрирован, email подтверждён, токен получен")
 
         # --- задача уходит в очередь Redis -------------------------------
         response = await client.post(

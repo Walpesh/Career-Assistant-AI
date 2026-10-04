@@ -97,6 +97,26 @@ class Settings(BaseSettings):
     #: Обнаружение повторного использования refresh-токена (revoke all при reuse).
     refresh_token_reuse_detection: bool = True
 
+    # --- SMTP и email-верификация (Auth Module, docs/03 §2) ---
+    #: SMTP-сервер исходящих писем. Пусто → письма не отправляются,
+    #: OTP-код только логируется (development без SMTP-сервера).
+    smtp_host: str = ""
+    #: Порт SMTP: 587 — STARTTLS, 465 — SSL (см. smtp_security).
+    smtp_port: int = 587
+    #: Логин SMTP (пусто → анонимное соединение, только для dev-серверов).
+    smtp_user: str = ""
+    smtp_password: str = ""
+    #: Режим шифрования соединения: starttls | ssl | none.
+    smtp_security: str = "starttls"
+    #: Отправитель письма: "Имя <адрес>" либо просто адрес.
+    emails_from: str = "Career-Assistant-AI <noreply@example.com>"
+    #: Срок жизни OTP-кода верификации, минут (ТЗ: 10 минут).
+    otp_ttl_minutes: int = 10
+    #: Максимум неверных попыток ввода кода (ТЗ: 5; затем блокировка).
+    otp_max_attempts: int = 5
+    #: Минимальный интервал между отправками кода, сек (resend: 1/60 сек).
+    otp_resend_interval_seconds: int = 60
+
     # --- Queue Manager: Redis + ARQ (docs/01 §3, docs/04 §6) ---
     # Очереди Redis. Задачи попадают в них через enqueue_job() при создании
     # задачи API, а не через опрос таблицы `tasks` (см. queue_manager/queues.py).

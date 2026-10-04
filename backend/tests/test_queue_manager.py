@@ -471,19 +471,17 @@ _PASSWORD = "strongpassword"
 
 
 async def _register_and_login(client) -> tuple[str, dict]:
-    """Регистрация + вход → (user_id, auth-заголовки)."""
-    email = f"q{uuid.uuid4().hex[:10]}@test.dev"
-    response = await client.post(
-        f"{API}/auth/register", json={"email": email, "password": _PASSWORD}
-    )
-    assert response.status_code == 201, response.text
-    user_id = response.json()["id"]
+    """Регистрация + подтверждение email → (user_id, auth-заголовки).
 
-    response = await client.post(
-        f"{API}/auth/login", json={"email": email, "password": _PASSWORD}
-    )
-    assert response.status_code == 200, response.text
-    return user_id, {"Authorization": f"Bearer {response.json()['access_token']}"}
+    Токены выдаёт POST /auth/verify-email: до подтверждения email вход
+    запрещён (docs/03 §2).
+    """
+    from conftest import register_verified, user_id_for
+
+    email = f"q{uuid.uuid4().hex[:10]}@test.dev"
+    tokens = await register_verified(client, email, _PASSWORD)
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+    return await user_id_for(client, headers), headers
 
 
 async def _create_task_row(

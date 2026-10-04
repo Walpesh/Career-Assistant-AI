@@ -16,7 +16,10 @@ __all__ = [
     "RegisterRequest",
     "LoginRequest",
     "RefreshRequest",
+    "VerifyEmailRequest",
+    "ResendCodeRequest",
     "TokenResponse",
+    "VerificationSent",
     "LogoutResponse",
     "WsTicketResponse",
     "UserOut",
@@ -45,6 +48,36 @@ class RefreshRequest(BaseModel):
     """POST /auth/refresh — body c refresh-token'ом."""
 
     refresh_token: str = Field(min_length=1)
+
+
+class VerifyEmailRequest(BaseModel):
+    """POST /auth/verify-email — { email, code } (ТЗ: 6-значный код)."""
+
+    email: EmailStr = Field(max_length=255)
+    code: str = Field(min_length=6, max_length=6, pattern=r"^\d{6}$")
+
+    @field_validator("email")
+    @classmethod
+    def _normalize_email(cls, value: str) -> str:
+        return value.strip().lower()
+
+
+class ResendCodeRequest(BaseModel):
+    """POST /auth/resend-code — { email } (rate-limit 1/60 сек на email)."""
+
+    email: EmailStr = Field(max_length=255)
+
+    @field_validator("email")
+    @classmethod
+    def _normalize_email(cls, value: str) -> str:
+        return value.strip().lower()
+
+
+class VerificationSent(BaseModel):
+    """Ответ register / resend-code: код отправлен на email (JWT нет)."""
+
+    message: str = "Verification code sent to email"
+    email: EmailStr
 
 
 class TokenResponse(BaseModel):
@@ -82,4 +115,5 @@ class UserOut(BaseModel):
     id: uuid.UUID
     email: EmailStr
     is_active: bool
+    is_verified: bool
     created_at: datetime

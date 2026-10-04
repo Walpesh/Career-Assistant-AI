@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -88,14 +89,25 @@ class SensitiveHeaderLogFilter:
         return True
 
 
-def _error_response(status_code: int, detail: str, error_code: str | None) -> JSONResponse:
-    """Единый формат ошибок: { detail, error_code } (docs/03_API_CONTRACTS.md §1)."""
+def _error_response(
+    status_code: int,
+    detail: str,
+    error_code: str | None,
+    headers: Mapping[str, str] | None = None,
+) -> JSONResponse:
+    """Единый формат ошибок: { detail, error_code } (docs/03_API_CONTRACTS.md §1).
+
+    ``headers`` пробрасываются без изменений: без этого теряется ``Retry-After``,
+    который docs/03 §2 требует на каждом 429 — и клиент не знает, когда
+    повторить запрос (регистрация, resend OTP, общий лимитер Redis).
+    """
     return JSONResponse(
         status_code=status_code,
         content={
             "detail": detail,
             "error_code": error_code or DEFAULT_ERROR_CODES.get(status_code, "ERROR"),
         },
+        headers=headers,
     )
 
 
@@ -189,12 +201,12 @@ def create_app() -> FastAPI:
     # --- Единый формат ошибок (docs/03 §1: { detail, error_code }) ---
     @app.exception_handler(AppError)
     async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
-        return _error_response(exc.status_code, str(exc.detail), exc.error_code)
+        return _error_response(exc.status_code, str(exc.detail), exc.error_code, exc.headers)
 
     @app.exception_handler(HTTPException)
     async def http_error_handler(request: Request, exc: HTTPException) -> JSONResponse:
         code = getattr(exc, "error_code", None)
-        return _error_response(exc.status_code, str(exc.detail), code)
+        return _error_response(exc.status_code, str(exc.detail), code, exc.headers)
 
     @app.exception_handler(StarletteHTTPException)
     async def starlette_error_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
@@ -202,7 +214,7 @@ def create_app() -> FastAPI:
         if exc.status_code >= 500:
             # 5xx — инцидент: уходит в Sentry (PII вычищается before_send).
             capture_exception(exc)
-        return _error_response(exc.status_code, str(exc.detail), code)
+        return _error_response(exc.status_code, str(exc.detail), code, exc.headers)
 
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:

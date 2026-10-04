@@ -25,11 +25,29 @@ RESUME_TEXT = "Python-разработчик, 4 года опыта: FastAPI, Po
 
 
 async def register(client, email: str = EMAIL, password: str = PASSWORD) -> dict:
+    """POST /auth/register → 201 { message, email } (JWT не выдаётся, docs/03 §2)."""
     response = await client.post(
         f"{API}/auth/register", json={"email": email, "password": password}
     )
     assert response.status_code == 201, response.text
     return response.json()
+
+
+async def verify(client, email: str = EMAIL, code: str | None = None) -> dict:
+    """POST /auth/verify-email с выданным OTP-кодом → пара JWT."""
+    from conftest import confirm_email
+
+    return await confirm_email(client, email, code)
+
+
+async def register_verified(client, email: str = EMAIL, password: str = PASSWORD) -> dict:
+    """Полный флоу: register → подтверждение email → пара JWT.
+
+    Тесты этого модуля проверяют вход уже подтверждённого пользователя,
+    поэтому подтверждаем email сразу (docs/03 §2).
+    """
+    await register(client, email, password)
+    return await verify(client, email)
 
 
 async def login(client, email: str = EMAIL, password: str = PASSWORD) -> dict:
@@ -50,21 +68,30 @@ def auth_headers(tokens: dict) -> dict[str, str]:
 
 
 async def test_register_creates_user_and_profile(client):
-    user = await register(client)
+    """Register → неверифицированный аккаунт; профиль доступен после OTP.
 
-    assert user["email"] == EMAIL
-    assert user["is_active"] is True
-    assert "password" not in user and "password_hash" not in user
+    Ответ register — только { message, email }: JWT выдаёт verify-email
+    (docs/03 §2), поэтому и is_active, и профиль проверяем после подтверждения.
+    """
+    user = await register(client)
+    assert user == {"message": "Verification code sent to email", "email": EMAIL}
 
     # Профиль создаётся сразу (docs/02 §4: users 1─1 user_profiles).
-    tokens = await login(client)
+    tokens = await verify(client)
+    me = await client.get(f"{API}/auth/me", headers=auth_headers(tokens))
+    assert me.status_code == 200
+    assert me.json()["email"] == EMAIL
+    assert me.json()["is_active"] is True
+    assert me.json()["is_verified"] is True
+    assert "password" not in me.json() and "password_hash" not in me.json()
+
     profile = await client.get(f"{API}/profile", headers=auth_headers(tokens))
     assert profile.status_code == 200
     assert profile.json()["match_threshold"] == 70  # DEFAULT из docs/02 §3.2
 
 
 async def test_register_duplicate_email_409(client):
-    await register(client)
+    await register_verified(client)
     response = await client.post(
         f"{API}/auth/register", json={"email": EMAIL.upper(), "password": PASSWORD}
     )
@@ -83,8 +110,7 @@ async def test_register_short_password_is_validation_error(client):
 
 
 async def test_login_returns_token_pair(client):
-    await register(client)
-    tokens = await login(client)
+    tokens = await register_verified(client)
 
     assert tokens["token_type"] == "bearer"
     assert tokens["access_token"]
@@ -93,7 +119,7 @@ async def test_login_returns_token_pair(client):
 
 
 async def test_login_wrong_password_401(client):
-    await register(client)
+    await register_verified(client)
     response = await client.post(
         f"{API}/auth/login", json={"email": EMAIL, "password": "wrong-password"}
     )
@@ -102,8 +128,7 @@ async def test_login_wrong_password_401(client):
 
 
 async def test_me_requires_valid_access_token(client):
-    await register(client)
-    tokens = await login(client)
+    tokens = await register_verified(client)
 
     ok = await client.get(f"{API}/auth/me", headers=auth_headers(tokens))
     assert ok.status_code == 200
@@ -121,8 +146,7 @@ async def test_me_requires_valid_access_token(client):
 
 
 async def test_refresh_flow(client):
-    await register(client)
-    tokens = await login(client)
+    tokens = await register_verified(client)
 
     refreshed = await client.post(
         f"{API}/auth/refresh", json={"refresh_token": tokens["refresh_token"]}
@@ -155,8 +179,7 @@ async def test_profile_requires_auth(client):
 
 
 async def test_profile_partial_update(client):
-    await register(client)
-    tokens = await login(client)
+    tokens = await register_verified(client)
     headers = auth_headers(tokens)
 
     # Частичное обновление из docs/03 §3 (пример тела PUT).
@@ -189,8 +212,7 @@ async def test_profile_partial_update(client):
 
 
 async def test_profile_validation_errors(client):
-    await register(client)
-    tokens = await login(client)
+    tokens = await register_verified(client)
     headers = auth_headers(tokens)
 
     # docs/02 §3.2: match_threshold CHECK 0–100.
@@ -231,8 +253,7 @@ async def test_compress_resume_updates_compact_resume(client, monkeypatch):
 
     monkeypatch.setattr(profile_router, "compress_resume_text", fake_compress)
 
-    await register(client)
-    tokens = await login(client)
+    tokens = await register_verified(client)
     headers = auth_headers(tokens)
     await client.put(f"{API}/profile", json={"resume_text": RESUME_TEXT}, headers=headers)
 
@@ -285,8 +306,7 @@ async def test_convert_resume_alias_endpoint(client, monkeypatch, engine, queue_
     # Воркер импортирует compress_resume_text из app.modules.user_profile.llm.
     monkeypatch.setattr(llm_module, "compress_resume_text", fake_compress)
 
-    await register(client)
-    tokens = await login(client)
+    tokens = await register_verified(client)
     headers = auth_headers(tokens)
     await client.put(f"{API}/profile", json={"resume_text": RESUME_TEXT}, headers=headers)
 
@@ -310,8 +330,7 @@ async def test_convert_resume_alias_endpoint(client, monkeypatch, engine, queue_
 
 
 async def test_compress_resume_empty_and_llm_errors(client, monkeypatch):
-    await register(client)
-    tokens = await login(client)
+    tokens = await register_verified(client)
     headers = auth_headers(tokens)
 
     # Пустое резюме → 400 RESUME_EMPTY.
@@ -331,8 +350,7 @@ async def test_compress_resume_empty_and_llm_errors(client, monkeypatch):
 
 async def test_profile_preferences_roundtrip_and_clear(client):
     """docs/03 §3: предпочтения анализа и хвост письма сохраняются и очищаются."""
-    await register(client)
-    headers = auth_headers(await login(client))
+    headers = auth_headers(await register_verified(client))
 
     # Пустые значения по умолчанию.
     profile = await client.get(f"{API}/profile", headers=headers)
@@ -366,8 +384,7 @@ async def test_profile_preferences_roundtrip_and_clear(client):
 
 async def test_profile_preferences_length_limit(client):
     """docs/02 §3.2: слишком длинные пожелания отклоняются валидацией."""
-    await register(client)
-    headers = auth_headers(await login(client))
+    headers = auth_headers(await register_verified(client))
 
     response = await client.put(
         f"{API}/profile",

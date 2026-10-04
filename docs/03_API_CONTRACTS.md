@@ -25,12 +25,44 @@
 
 | Метод | URL | Описание | Auth |
 |-------|-----|----------|------|
-| POST | `/auth/register` | Регистрация | Нет |
+| POST | `/auth/register` | Регистрация (JWT **не** выдаётся, отправляется OTP-код) | Нет |
+| POST | `/auth/verify-email` | Подтверждение email кодом → пара JWT | Нет |
+| POST | `/auth/resend-code` | Повторная отправка OTP-кода (1 раз / 60 сек на email) | Нет |
 | POST | `/auth/login` | Вход (получение JWT) | Нет |
 | POST | `/auth/refresh` | Обновление access-токена | Refresh-token (cookie/тело) |
 | POST | `/auth/logout` | Отзыв refresh-токена и очистка cookie | Refresh-cookie |
 | POST | `/auth/ws-ticket` | Одноразовый тикет для WebSocket | Да |
 | GET  | `/auth/me` | Текущий пользователь | Да |
+
+### Подтверждение email по OTP-коду
+
+Регистрация двухшаговая: сначала создаётся аккаунт, затем подтверждается
+владение email. **Пара JWT выдаётся только после подтверждения.**
+
+| Шаг | Запрос | Ответ |
+|-----|--------|-------|
+| 1 | `POST /auth/register` | `201 { "message": "Verification code sent to email", "email": … }` |
+| 2 | `POST /auth/verify-email` | `200 { "access_token", "refresh_token", "token_type" }` |
+
+Правила:
+
+- Код — 6 цифр, генерируется криптостойко (`secrets`), в БД хранится **только
+  HMAC-SHA256-хэш** (`email_otps.otp_code_hash`); сам код живёт в письме.
+- Срок действия — 10 минут (`OTP_TTL_MINUTES`), максимум 5 неверных попыток
+  (`OTP_MAX_ATTEMPTS`), после чего код блокируется до повторной отправки.
+- Успешный код удаляется и не может быть использован повторно; повторная
+  отправка заменяет предыдущий код (действует только последний).
+- `POST /auth/login` для неподтверждённого аккаунта — `403 EMAIL_NOT_VERIFIED`.
+- `POST /auth/resend-code` — не чаще 1 раза в 60 сек на email
+  (`OTP_RESEND_INTERVAL_SECONDS`), иначе `429 RATE_LIMITED` + `Retry-After`.
+  Для несуществующего и уже подтверждённого email ответ такой же
+  (200 без отправки) — иначе эндпоинт раскрывал бы существующие адреса.
+
+Ошибки `POST /auth/verify-email` — `400` с `error_code`:
+`OTP_INVALID` (неверный код, попытка засчитана), `OTP_NOT_FOUND` (код не
+запрашивался или уже использован), `OTP_EXPIRED` (10 минут истекли),
+`OTP_LOCKED` (5 неверных попыток). `error_code` обязателен: клиент показывает
+пользователю текст сервера и понимает, когда можно запросить новый код.
 
 ### Безопасность токенов (security hardening)
 
@@ -52,6 +84,29 @@
 {
   "email": "user@example.com",
   "password": "strongpassword"
+}
+```
+
+Ответ `201` (JWT нет — аккаунт не подтверждён):
+```json
+{
+  "message": "Verification code sent to email",
+  "email": "user@example.com"
+}
+```
+
+**POST /auth/verify-email**
+```json
+{
+  "email": "user@example.com",
+  "code": "123456"
+}
+```
+
+**POST /auth/resend-code**
+```json
+{
+  "email": "user@example.com"
 }
 ```
 

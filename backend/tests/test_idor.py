@@ -70,20 +70,13 @@ async def fresh_client():
 
 
 async def _register_and_login(email: str) -> tuple[str, dict]:
-    """Зарегистрировать пользователя и вернуть (user_id, Authorization)."""
-    async with fresh_client() as client:
-        created = await client.post(
-            f"{API}/auth/register", json={"email": email, "password": PASSWORD}
-        )
-        assert created.status_code == 201, created.text
-        user_id = created.json()["id"]
+    """Зарегистрировать пользователя, подтвердить email и вернуть (user_id, Authorization)."""
+    from conftest import register_verified, user_id_for
 
-        logged_in = await client.post(
-            f"{API}/auth/login", json={"email": email, "password": PASSWORD}
-        )
-        assert logged_in.status_code == 200, logged_in.text
-        headers = {"Authorization": f"Bearer {logged_in.json()['access_token']}"}
-    return user_id, headers
+    async with fresh_client() as client:
+        tokens = await register_verified(client, email, PASSWORD)
+        headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+        return await user_id_for(client, headers), headers
 
 
 async def _seed_vacancy_with_results(

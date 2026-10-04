@@ -78,12 +78,17 @@ async def fresh_client():
 
 
 async def _register(client, email: str | None = None) -> str:
+    """Зарегистрировать + подтвердить email → id пользователя.
+
+    До подтверждения email вход запрещён (docs/03 §2), поэтому токены выдаёт
+    verify-email, а не login. Сессия самого подтверждения отзывается: тесты
+    этого модуля считают активные refresh-сессии и должны видеть только
+    те, что создали через login.
+    """
+    from conftest import register_verified_without_session
+
     target = email or f"adv{uuid.uuid4().hex[:10]}@test.dev"
-    response = await client.post(
-        f"{API}/auth/register", json={"email": target, "password": PASSWORD}
-    )
-    assert response.status_code == 201, response.text
-    return response.json()["id"]
+    return await register_verified_without_session(client, target, PASSWORD)
 
 
 async def _login(client, email: str, password: str = PASSWORD) -> dict:
@@ -103,6 +108,16 @@ async def _tokens_of(factory, user_id: str) -> list[RefreshToken]:
                 )
             ).all()
         )
+
+
+async def _active_tokens_of(factory, user_id: str) -> list[RefreshToken]:
+    """Только НЕотозванные токены.
+
+    Реестр хранит историю, а не текущее состояние: ротация и confirm-email
+    оставляют отозванные записи. Тесты про активные сессии считают именно их,
+    иначе счёт зависел бы от того, была ли уже верификация.
+    """
+    return [row for row in await _tokens_of(factory, user_id) if row.revoked_at is None]
 
 
 # ============================================================
@@ -148,10 +163,16 @@ async def test_refresh_token_is_never_stored_in_plaintext(factory, client):
 
     rows = await _tokens_of(factory, user_id)
     assert rows
-    stored = {row.hashed_token for row in rows}
-    assert stored == {hash_token(tokens["refresh_token"])}
-    # Сам JWT не встречается ни в одной записи реестра.
-    assert all(tokens["refresh_token"] not in value for value in stored)
+    # В реестре лежит хэш, а не сам JWT: JWT начинается с «eyJ», хэш — нет,
+    # и его длина фиксирована (SHA-256 hex = 64 символа).
+    for row in rows:
+        assert not row.hashed_token.startswith("eyJ")
+        assert len(row.hashed_token) == len(hash_token("x"))
+    assert all(tokens["refresh_token"] not in row.hashed_token for row in rows)
+
+    # Активная сессия ровно одна, и её хэш соответствует выданному токену.
+    active = await _active_tokens_of(factory, user_id)
+    assert [row.hashed_token for row in active] == [hash_token(tokens["refresh_token"])]
 
 
 def _user_id(tokens: dict) -> str:
@@ -196,11 +217,15 @@ async def test_refresh_rotates_token_and_revokes_previous(factory, client):
     assert second["refresh_token"] != first["refresh_token"]
     assert second["access_token"]
 
+    # Ротация: предъявленный токен отозван, активным остался ровно один —
+    # новый. В реестре остаётся вся история: сессия подтверждения email
+    # (отозвана), сессия login (отозвана ротацией) и новая (активна).
     rows = await _tokens_of(factory, _user_id(first))
-    assert len(rows) == 2
-    assert all(row.revoked_at is not None for row in rows) or any(
-        row.revoked_at is not None for row in rows
-    )
+    revoked = [row for row in rows if row.revoked_at is not None]
+    active = await _active_tokens_of(factory, _user_id(first))
+    assert len(rows) == len(revoked) + len(active)
+    assert hash_token(first["refresh_token"]) in {row.hashed_token for row in revoked}
+    assert [row.hashed_token for row in active] == [hash_token(second["refresh_token"])]
 
 
 async def test_refresh_cookie_is_httponly_and_path_scoped(client):

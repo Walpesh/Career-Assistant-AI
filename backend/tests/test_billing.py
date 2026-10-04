@@ -75,6 +75,18 @@ def make_user(engine):
     return _make
 
 
+async def _auth_headers(client, email: str) -> dict[str, str]:
+    """Зарегистрировать пользователя, подтвердить email и вернуть Bearer JWT.
+
+    Токены выдаёт POST /auth/verify-email: до подтверждения email вход
+    запрещён (docs/03 §2).
+    """
+    from conftest import register_verified
+
+    tokens = await register_verified(client, email, "strongpassword")
+    return {"Authorization": f"Bearer {tokens['access_token']}"}
+
+
 @pytest.fixture
 def set_tier(engine):
     """Выдать пользователю подписку заданного тарифа."""
@@ -276,11 +288,7 @@ async def test_quota_summary_reports_remaining_and_reset(engine, make_user):
 async def test_parsing_endpoint_enforces_daily_quota(client, engine, make_user, queue_pool):
     """POST /parsing/manual отдаёт 429 QUOTA_EXCEEDED после лимита free."""
     email = "quota-parsing@test.dev"
-    await client.post(f"{API}/auth/register", json={"email": email, "password": "strongpassword"})
-    tokens = await client.post(
-        f"{API}/auth/login", json={"email": email, "password": "strongpassword"}
-    )
-    headers = {"Authorization": f"Bearer {tokens.json()['access_token']}"}
+    headers = await _auth_headers(client, email)
     user_id = await make_user(email)
     payload = {"vacancy_url": "https://hh.ru/vacancy/123456"}
 
@@ -308,11 +316,7 @@ async def test_quota_block_creates_no_extra_tasks(client, engine, make_user, que
     from app.db.models import Task
 
     email = "quota-no-task@test.dev"
-    await client.post(f"{API}/auth/register", json={"email": email, "password": "strongpassword"})
-    tokens = await client.post(
-        f"{API}/auth/login", json={"email": email, "password": "strongpassword"}
-    )
-    headers = {"Authorization": f"Bearer {tokens.json()['access_token']}"}
+    headers = await _auth_headers(client, email)
     user_id = await make_user(email)
     payload = {"vacancy_url": "https://hh.ru/vacancy/654321"}
 
@@ -327,11 +331,7 @@ async def test_quota_block_creates_no_extra_tasks(client, engine, make_user, que
 async def test_usage_endpoint_reports_current_quota(client, make_user):
     """GET /billing/usage отдаёт тариф и расход текущего пользователя."""
     email = "usage-endpoint@test.dev"
-    await client.post(f"{API}/auth/register", json={"email": email, "password": "strongpassword"})
-    tokens = await client.post(
-        f"{API}/auth/login", json={"email": email, "password": "strongpassword"}
-    )
-    headers = {"Authorization": f"Bearer {tokens.json()['access_token']}"}
+    headers = await _auth_headers(client, email)
     await make_user(email)
 
     response = await client.get(f"{API}/billing/usage", headers=headers)
@@ -349,11 +349,7 @@ async def test_billing_endpoints_require_auth(client):
 async def test_subscription_endpoint_for_free_user(client, make_user):
     """Без подписки /subscription отдаёт эффективный тариф free."""
     email = "sub-free@test.dev"
-    await client.post(f"{API}/auth/register", json={"email": email, "password": "strongpassword"})
-    tokens = await client.post(
-        f"{API}/auth/login", json={"email": email, "password": "strongpassword"}
-    )
-    headers = {"Authorization": f"Bearer {tokens.json()['access_token']}"}
+    headers = await _auth_headers(client, email)
     await make_user(email)
 
     payload = (await client.get(f"{API}/billing/subscription", headers=headers)).json()

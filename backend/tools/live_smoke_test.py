@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 import time
 import uuid
@@ -71,19 +72,36 @@ async def test_auth(client: httpx.AsyncClient, email: str, password: str) -> dic
     section("1. AUTH (docs/03 §2)")
     r = await client.post(f"{PREFIX}/auth/register", json={"email": email, "password": password})
     if r.status_code == 409:
-        await client.post(f"{PREFIX}/auth/login", json={"email": email, "password": password})
+        # Аккаунт уже есть — сценарий «повторная регистрация» и login.
         check("auth: повторная регистрация → 409 EMAIL_TAKEN", True)
+        r = await client.post(f"{PREFIX}/auth/login", json={"email": email, "password": password})
     else:
+        # Регистрация двухшаговая: JWT выдаёт только verify-email (docs/03 §2).
         check("POST /auth/register → 201", r.status_code == 201, f"{r.status_code} {r.text[:200]}")
         body = r.json()
-        check("register: id + is_active в ответе",
-              bool(body.get("id")) and body.get("is_active") is True, str(body)[:200])
+        check("register: JWT не выдаётся, ждём подтверждение email",
+              "access_token" not in body and body.get("email") == email, str(body)[:200])
 
-    r = await client.post(f"{PREFIX}/auth/login", json={"email": email, "password": password})
-    check("POST /auth/login → 200", r.status_code == 200, f"{r.status_code} {r.text[:200]}")
+        r = await client.post(f"{PREFIX}/auth/login", json={"email": email, "password": password})
+        check("login до подтверждения email → 403 EMAIL_NOT_VERIFIED",
+              r.status_code == 403 and r.json().get("error_code") == "EMAIL_NOT_VERIFIED",
+              f"{r.status_code} {r.text[:200]}")
+
+        code = os.environ.get("CA_OTP_CODE", "")
+        if not code:
+            check("POST /auth/verify-email → пропущен (задайте CA_OTP_CODE)", True)
+            raise RuntimeError(
+                "нужен OTP-код: задайте переменную окружения CA_OTP_CODE "
+                "(6 цифр из письма; в dev без SMTP код пишется в лог приложения)"
+            )
+        r = await client.post(f"{PREFIX}/auth/verify-email", json={"email": email, "code": code})
+        check("POST /auth/verify-email → 200 (пара JWT)", r.status_code == 200, f"{r.status_code} {r.text[:200]}")
+
+    if r.status_code != 200:
+        return {}
     tokens = r.json()
     access, refresh = tokens.get("access_token", ""), tokens.get("refresh_token", "")
-    check("login: возвращает access + refresh", bool(access) and bool(refresh))
+    check("auth: возвращает access + refresh", bool(access) and bool(refresh))
 
     headers = {"Authorization": f"Bearer {access}"}
     r = await client.get(f"{PREFIX}/auth/me", headers=headers)

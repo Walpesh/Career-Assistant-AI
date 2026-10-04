@@ -8,11 +8,14 @@ import { session } from './session.js';
 import { emit } from './bus.js';
 
 export class ApiError extends Error {
-  constructor(status, message, errorCode) {
+  constructor(status, message, errorCode, retryAfter) {
     super(message || `HTTP ${status}`);
     this.name = 'ApiError';
     this.status = status;
     this.errorCode = errorCode || null;
+    // Retry-After с 429 (docs/03 §2): клиент обязан ждать указанное число
+    // секунд, поэтому заголовок разбираем здесь, а не в вызывающем коде.
+    this.retryAfter = Number(retryAfter) || null;
   }
 }
 
@@ -95,7 +98,12 @@ async function request(method, path, body, options = {}) {
       session.clear();
       emit('auth:expired');
     }
-    const error = new ApiError(response.status, data?.detail || response.statusText, data?.error_code);
+    const error = new ApiError(
+      response.status,
+      data?.detail || response.statusText,
+      data?.error_code,
+      response.headers.get('retry-after')
+    );
     // Сигнал для баннера деградации: LLM_UNAVAILABLE / QUEUE_UNAVAILABLE и т.п.
     emit('api:error', {
       status: error.status,
@@ -114,6 +122,20 @@ async function request(method, path, body, options = {}) {
 export const api = {
   /* --- Auth --- */
   register: (email, password) => request('POST', '/auth/register', { email, password }, { skipAuth: true }),
+
+  /**
+   * Подтвердить email шестизначным кодом и сразу войти.
+   * Сервер отвечает парой JWT (docs/03 §2) — access-токен кладём в память,
+   * refresh уже лежит в HttpOnly cookie.
+   */
+  verifyEmail: async (email, code) => {
+    const data = await request('POST', '/auth/verify-email', { email, code }, { skipAuth: true });
+    if (data?.access_token) session.setTokens({ access_token: data.access_token });
+    return data;
+  },
+
+  /** Повторная отправка кода (сервер: 1 раз в 60 сек на email → 429 + Retry-After). */
+  resendCode: (email) => request('POST', '/auth/resend-code', { email }, { skipAuth: true }),
 
   login: async (email, password) => {
     const data = await request('POST', '/auth/login', { email, password }, { skipAuth: true });

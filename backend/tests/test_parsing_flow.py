@@ -929,17 +929,16 @@ async def test_worker_ignores_llm_tasks_in_parsing_queue(engine, user_factory, m
 # --- сквозной поток: REST → очередь → воркер → БД -------------------------
 
 async def _register(client, email: str | None = None) -> dict[str, str]:
-    """Зарегистрироваться и войти — вернуть заголовок Authorization.
+    """Зарегистрироваться, подтвердить email и войти — вернуть Authorization.
 
-    POST /auth/register отдаёт UserOut, токены выдаёт /auth/login (docs/03 §2).
+    POST /auth/register создаёт неподтверждённый аккаунт и JWT не выдаёт;
+    пару токенов отдаёт POST /auth/verify-email (docs/03 §2).
     """
+    from conftest import register_verified
+
     email = email or f"flow{uuid.uuid4().hex[:8]}@test.dev"
-    payload = {"email": email, "password": "pass12345"}
-    registered = await client.post("/api/v1/auth/register", json=payload)
-    assert registered.status_code in (200, 201), registered.text
-    logged_in = await client.post("/api/v1/auth/login", json=payload)
-    assert logged_in.status_code == 200, logged_in.text
-    return {"Authorization": f"Bearer {logged_in.json()['access_token']}"}
+    tokens = await register_verified(client, email, "pass12345")
+    return {"Authorization": f"Bearer {tokens['access_token']}"}
 
 
 async def test_manual_endpoint_task_is_picked_up_by_worker(client, engine, monkeypatch, queue_runner):

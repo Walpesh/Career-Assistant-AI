@@ -60,16 +60,18 @@ def factory(engine, client):
 
 
 async def _register_and_login(client, email: str | None = None) -> tuple[str, dict]:
-    created = await client.post(
-        f"{API}/auth/register",
-        json={"email": email or f"qr{uuid.uuid4().hex[:10]}@test.dev", "password": PASSWORD},
+    """Регистрация + подтверждение email → (user_id, auth-заголовки).
+
+    Токены выдаёт POST /auth/verify-email: до подтверждения email вход
+    запрещён (docs/03 §2).
+    """
+    from conftest import register_verified, user_id_for
+
+    tokens = await register_verified(
+        client, email or f"qr{uuid.uuid4().hex[:10]}@test.dev", PASSWORD
     )
-    assert created.status_code == 201, created.text
-    logged_in = await client.post(
-        f"{API}/auth/login", json={"email": created.json()["email"], "password": PASSWORD}
-    )
-    assert logged_in.status_code == 200, logged_in.text
-    return created.json()["id"], {"Authorization": f"Bearer {logged_in.json()['access_token']}"}
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+    return await user_id_for(client, headers), headers
 
 
 async def _seed_task(

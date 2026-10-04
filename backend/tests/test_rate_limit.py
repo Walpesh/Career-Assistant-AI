@@ -75,18 +75,17 @@ def _rule(name: str):
 
 
 async def _register_and_login(client, email: str | None = None) -> tuple[str, dict]:
-    """Регистрация + вход; возвращает (user_id, Authorization-заголовки)."""
+    """Регистрация + подтверждение email → (user_id, Authorization-заголовки).
+
+    Токены выдаёт POST /auth/verify-email: до подтверждения email вход
+    запрещён (docs/03 §2).
+    """
+    from conftest import register_verified, user_id_for
+
     target = email or f"rl{uuid.uuid4().hex[:10]}@test.dev"
-    created = await client.post(
-        f"{API}/auth/register", json={"email": target, "password": PASSWORD}
-    )
-    assert created.status_code == 201, created.text
-    logged_in = await client.post(
-        f"{API}/auth/login", json={"email": target, "password": PASSWORD}
-    )
-    assert logged_in.status_code == 200, logged_in.text
-    token = logged_in.json()["access_token"]
-    return created.json()["id"], {"Authorization": f"Bearer {token}"}
+    tokens = await register_verified(client, target, PASSWORD)
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+    return await user_id_for(client, headers), headers
 
 
 def _as_text(value) -> str:
@@ -317,9 +316,13 @@ async def test_register_rate_limit_returns_429_with_retry_after(limited):
 
 async def test_login_rate_limit_returns_429_with_retry_after(limited):
     """5 входов/минуту; 6-й → 429 (даже при верных учётных данных)."""
+    from conftest import register_verified
+
     rule = _rule("auth_login")
     email = f"login{uuid.uuid4().hex[:8]}@test.dev"
-    await limited.post(f"{API}/auth/register", json={"email": email, "password": PASSWORD})
+    # Подтверждаем email: без него login вернул бы 403 EMAIL_NOT_VERIFIED,
+    # и лимит измерялся бы совсем на другом ответе (docs/03 §2).
+    await register_verified(limited, email, PASSWORD)
     await _clear_limiter()
 
     for _ in range(rule.limit):
@@ -482,6 +485,8 @@ async def test_limiter_fails_open_when_redis_unavailable(client, monkeypatch):
     """
     import app.core.redis_client as module
 
+    from conftest import register_verified
+
     async def _no_redis():
         return None
 
@@ -489,10 +494,7 @@ async def test_limiter_fails_open_when_redis_unavailable(client, monkeypatch):
     monkeypatch.setattr(settings, "rate_limit_enabled", True, raising=False)
 
     email = f"failopen{uuid.uuid4().hex[:8]}@test.dev"
-    created = await client.post(
-        f"{API}/auth/register", json={"email": email, "password": PASSWORD}
-    )
-    assert created.status_code == 201, created.text
+    tokens = await register_verified(client, email, PASSWORD)
 
     logged_in = await client.post(
         f"{API}/auth/login", json={"email": email, "password": PASSWORD}
@@ -502,3 +504,6 @@ async def test_limiter_fails_open_when_redis_unavailable(client, monkeypatch):
     headers = {"Authorization": f"Bearer {logged_in.json()['access_token']}"}
     me = await client.get(f"{API}/auth/me", headers=headers)
     assert me.status_code == 200, me.text
+    # Токен, выданный подтверждением email, тоже работает (docs/03 §2).
+    assert tokens["access_token"]
+    assert tokens["access_token"] != logged_in.json()["access_token"]

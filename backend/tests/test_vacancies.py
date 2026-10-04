@@ -53,16 +53,15 @@ def make_fetch(**overrides):
 
 
 async def auth(client, email: str = EMAIL) -> dict[str, str]:
-    """Регистрация + login → заголовок Authorization."""
-    response = await client.post(
-        f"{API}/auth/register", json={"email": email, "password": PASSWORD}
-    )
-    assert response.status_code == 201, response.text
-    response = await client.post(
-        f"{API}/auth/login", json={"email": email, "password": PASSWORD}
-    )
-    assert response.status_code == 200, response.text
-    return {"Authorization": f"Bearer {response.json()['access_token']}"}
+    """Регистрация + подтверждение email → заголовок Authorization.
+
+    Токены выдаёт POST /auth/verify-email: до подтверждения email вход
+    запрещён (docs/03 §2).
+    """
+    from conftest import register_verified
+
+    tokens = await register_verified(client, email, PASSWORD)
+    return {"Authorization": f"Bearer {tokens['access_token']}"}
 
 
 async def add_manual(client, headers: dict, url: str = VACANCY_URL):

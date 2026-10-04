@@ -15,6 +15,18 @@ x-common-env: &common-env
   TRUSTED_HOSTS: ${TRUSTED_HOSTS:-api,localhost,frontend}
   QUEUE_EMBEDDED_WORKERS: "false"
   QUEUE_RECOVER_ON_STARTUP: "true"
+  # Email OTP (docs/03 §2). SMTP_HOST пустой → письма не отправляются, и тогда
+  # подтвердить регистрацию невозможно: в production задайте реальный сервер.
+  SMTP_HOST: ${SMTP_HOST:-}
+  SMTP_PORT: ${SMTP_PORT:-587}
+  SMTP_USER: ${SMTP_USER:-}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+  SMTP_SECURITY: ${SMTP_SECURITY:-starttls}
+  # Значение в кавычках: «Имя <адрес>» содержит пробелы и угловые скобки.
+  EMAILS_FROM: "${EMAILS_FROM:-Career-Assistant-AI <noreply@example.com>}"
+  OTP_TTL_MINUTES: ${OTP_TTL_MINUTES:-10}
+  OTP_MAX_ATTEMPTS: ${OTP_MAX_ATTEMPTS:-5}
+  OTP_RESEND_INTERVAL_SECONDS: ${OTP_RESEND_INTERVAL_SECONDS:-60}
   # Observability (docs/01 §9): JSON-логи, Prometheus-метрики, Sentry.
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
   LOG_JSON_OUTPUT: "true"

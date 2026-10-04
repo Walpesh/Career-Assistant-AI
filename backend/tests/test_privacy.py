@@ -141,12 +141,11 @@ def make_user(engine):
 
 
 async def _auth_headers(client, email: str) -> dict[str, str]:
-    """Зарегистрировать пользователя и вернуть заголовок Bearer JWT."""
-    await client.post(f"{API}/auth/register", json={"email": email, "password": "strongpassword"})
-    tokens = await client.post(
-        f"{API}/auth/login", json={"email": email, "password": "strongpassword"}
-    )
-    return {"Authorization": f"Bearer {tokens.json()['access_token']}"}
+    """Зарегистрировать пользователя, подтвердить email и вернуть Bearer JWT."""
+    from conftest import register_verified
+
+    tokens = await register_verified(client, email, "strongpassword")
+    return {"Authorization": f"Bearer {tokens['access_token']}"}
 
 
 # ============================================================
@@ -356,8 +355,7 @@ async def test_count_user_rows_counts_only_own_data(engine, make_user):
 
 
 async def _auth_headers(client, email: str) -> dict[str, str]:
-    await client.post(f"{API}/auth/register", json={"email": email, "password": "strongpassword"})
-    tokens = await client.post(
-        f"{API}/auth/login", json={"email": email, "password": "strongpassword"}
-    )
-    return {"Authorization": f"Bearer {tokens.json()['access_token']}"}
+    from conftest import register_verified
+
+    tokens = await register_verified(client, email, "strongpassword")
+    return {"Authorization": f"Bearer {tokens['access_token']}"}
