@@ -138,6 +138,20 @@ function renderAll() {
 
 /* ---------- Мини-прогрессы активных задач ---------- */
 
+/**
+ * Сброс журнала перед повторным входом: очищаем записи и мини-прогрессы,
+ * подписки и обработчики остаются (initLogPanel идемпотентен).
+ */
+export function resetLogPanel() {
+  entries = [];
+  if (els.list) els.list.innerHTML = '';
+  miniRows.clear();
+  if (els.mini) {
+    els.mini.innerHTML = '';
+    els.mini.classList.add('hidden');
+  }
+}
+
 function renderMiniProgress(state) {
   if (!els.mini) return;
   const active = (state.tasks || []).filter((task) => ACTIVE_STATUSES.has(task.status)).slice(0, 3);

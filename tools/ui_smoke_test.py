@@ -172,6 +172,28 @@ def run_checks() -> int:
             )
             check(True, "Drawer письма открылся и содержит текст письма")
             check(page.locator("#btn-download-letter").is_visible(), "Кнопки копирования / .txt доступны")
+
+            # Стресс-проверка вёрстки: очень длинное письмо должно скроллиться
+            # внутри drawer'а, не выдавливая кнопки за пределы экрана.
+            layout = page.evaluate(
+                """() => {
+                    const pre = document.querySelector('#letter-content');
+                    pre.textContent = ('Длинный текст сопроводительного письма для проверки вёрстки. ').repeat(400);
+                    const btn = document.querySelector('#btn-download-letter').getBoundingClientRect();
+                    return {
+                        btnBottom: btn.bottom,
+                        viewportH: window.innerHeight,
+                        scrollable: pre.scrollHeight > pre.clientHeight,
+                        pageOverflowX: document.documentElement.scrollWidth - window.innerWidth
+                    };
+                }"""
+            )
+            check(
+                layout["btnBottom"] <= layout["viewportH"],
+                "Кнопка «Скачать .txt» не выдавлена за экран длинным письмом",
+            )
+            check(layout["scrollable"], "Длинный текст письма скроллится внутри drawer'а")
+            check(layout["pageOverflowX"] <= 0, "Нет горизонтального переполнения страницы")
             page.keyboard.press("Escape")
         else:
             check(False, "Кнопка просмотра письма не найдена")
@@ -223,6 +245,32 @@ def run_checks() -> int:
         page.wait_for_selector(".fap-item", timeout=10000)
         check(True, "Уведомление о запуске convert_resume показано")
         screenshot(page, "desktop-profile")
+
+        # Синхронизация порога матчинга между вкладками — без перезагрузки.
+        page.evaluate(
+            """() => {
+                const slider = document.querySelector('#profile-threshold');
+                slider.value = '55';
+                slider.dispatchEvent(new Event('input', { bubbles: true }));
+            }"""
+        )
+        page.click('[data-tab="dashboard"]')
+        page.wait_for_selector("#parsing-modes", state="visible", timeout=10000)
+        threshold_label = page.locator("#auto-threshold-value").inner_text().strip()
+        check(
+            threshold_label == "55%",
+            f"Порог из профиля мгновенно отражается на дашборде (получено: {threshold_label})",
+        )
+
+        # Выход из аккаунта: SPA-переключение на экран входа без F5.
+        page.click("#btn-logout")
+        page.wait_for_selector('#confirm-modal[data-open="1"]', timeout=10000)
+        page.click("#btn-confirm-ok")
+        page.wait_for_selector("#auth-screen", state="visible", timeout=10000)
+        nav_type = page.evaluate("window.performance.getEntriesByType('navigation')[0].type")
+        check(nav_type != "reload", "Выход выполнен без перезагрузки страницы (SPA)")
+        check(page.locator("#app-screen").is_hidden(), "Экран приложения скрыт после выхода")
+
         context.close()
         return finish(browser, failures, console_errors)
 
@@ -244,6 +292,24 @@ def finish(browser, failures: list[str], console_errors: list[str]) -> int:
     mpage.click('nav[aria-label="Мобильная навигация"] [data-tab="analysis"]')
     mpage.wait_for_selector("#view-analysis [data-vacancy-id]", timeout=15000)
     print("[OK  ] Мобильная версия вкладки «Анализ и отклик» рендерится")
+
+    # Мобильный drawer письма: кнопки действий не должны уезжать за экран.
+    mobile_letter = mpage.locator('#view-analysis [data-action="view-letter"]')
+    if mobile_letter.count() > 0:
+        mobile_letter.first.click()
+        mpage.wait_for_selector('#letter-drawer[data-open="1"]', timeout=10000)
+        buttons_visible = mpage.is_visible("#btn-copy-letter") and mpage.is_visible("#btn-download-letter")
+        print(f"[{'OK  ' if buttons_visible else 'FAIL'}] Мобильный drawer письма: кнопки действий видны")
+        if not buttons_visible:
+            failures.append("mobile letter drawer buttons")
+
+        overflow_x = mpage.evaluate("document.documentElement.scrollWidth - window.innerWidth")
+        overflow_ok = overflow_x <= 0
+        print(f"[{'OK  ' if overflow_ok else 'FAIL'}] Мобильная вёрстка без горизонтального переполнения ({overflow_x}px)")
+        if not overflow_ok:
+            failures.append("mobile horizontal overflow")
+        mpage.keyboard.press("Escape")
+
     screenshot(mpage, "mobile-analysis")
     mobile.close()
     browser.close()

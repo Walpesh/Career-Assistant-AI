@@ -3,9 +3,10 @@
    индикатор WebSocket, счётчик активных задач, журнал.
    ============================================================ */
 
-import { on } from '../core/bus.js';
+import { emit, on } from '../core/bus.js';
 import { api } from '../core/api.js';
 import { session } from '../core/session.js';
+import { CONFIG } from '../config.js';
 import { getState, setState, subscribe } from '../core/state.js';
 import { popup } from '../components/fadeout-action-popup.js';
 import { confirmDialog } from '../components/overlay.js';
@@ -51,14 +52,19 @@ export function initShell() {
       danger: true
     });
     if (!confirmed) return;
-    // Отзываем refresh-токен на сервере (cookie очищается), затем чистим клиент.
-    try {
-      await api.logout();
-    } catch {
-      /* logout не критичен для выхода — cookie всё равно истечёт */
+    // Отзываем refresh-токен на сервере (cookie очищается). В демо-режиме
+    // backend'а нет — сетевой запрос только шумел бы ошибкой в консоли.
+    if (!CONFIG.DEMO) {
+      try {
+        await api.logout();
+      } catch {
+        /* logout не критичен для выхода — cookie всё равно истечёт */
+      }
     }
     session.clear();
-    window.location.reload();
+    // Без location.reload(): состояние, вкладки и WS сбрасывает обработчик
+    // auth:logout в main.js — SPA мгновенно возвращается на экран входа.
+    emit('auth:logout');
   });
 
   on('ws:status', updateWsIndicator);
@@ -158,4 +164,21 @@ function openLogs() {
 function closeLogs() {
   document.getElementById('log-panel')?.style.removeProperty('transform');
   document.getElementById('log-backdrop')?.classList.add('hidden');
+}
+
+/**
+ * Сброс каркаса перед повторным входом (выход из аккаунта / удаление
+ * аккаунта): каждая вкладка снимает свои подписки и очищает контейнер,
+ * чтобы данные прошлого пользователя не оставались в DOM.
+ */
+export function resetShell() {
+  Object.values(views).forEach((view) => {
+    try {
+      view.reset?.();
+    } catch (error) {
+      console.error('[shell] ошибка сброса вкладки', error);
+    }
+  });
+  updateWsIndicator('disconnected');
+  updateTasksPill(getState());
 }

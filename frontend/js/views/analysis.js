@@ -21,6 +21,10 @@ let total = null;
 let selected = new Set();
 let currentAnalysis = { vacancyId: null, title: '' };
 let currentLetter = { vacancyId: null, title: '', content: '' };
+/** Функции отписки текущего монтирования (снимаются в reset()). */
+const teardowns = [];
+/** Контейнер вкладки — держим ссылку, чтобы снять делегированный клик. */
+let viewContainer = null;
 
 export async function mount() {
   if (mounted) return;
@@ -108,21 +112,48 @@ export async function mount() {
   els.next.addEventListener('click', () => { setFilters({ page: getState().filters.page + 1 }); refreshList(); });
 
   // Делегирование действий внутри списка и пустого состояния.
-  document.getElementById('view-analysis').addEventListener('click', handleListClick);
+  viewContainer = document.getElementById('view-analysis');
+  viewContainer.addEventListener('click', handleListClick);
   els.list.addEventListener('change', handleSelectionChange);
 
-  // WS: точечные обновления.
-  on('ws:vacancy.updated', () => scheduleLiveRefresh());
-  on('ws:analysis.ready', () => scheduleLiveRefresh());
-  on('ws:letter.ready', (payload) => {
-    if (currentLetter.vacancyId && payload?.vacancy_id === currentLetter.vacancyId) loadLetter(currentLetter.vacancyId);
-    scheduleLiveRefresh();
-  });
-  // Переподключение WS — список могл устареть, перечитываем без скелетона.
-  on('ws:resync', () => refreshList({ silent: true }));
-
+  // WS: точечные обновления (отписки складываем для reset()).
+  teardowns.push(
+    on('ws:vacancy.updated', () => scheduleLiveRefresh()),
+    on('ws:analysis.ready', () => scheduleLiveRefresh()),
+    on('ws:letter.ready', (payload) => {
+      if (currentLetter.vacancyId && payload?.vacancy_id === currentLetter.vacancyId) loadLetter(currentLetter.vacancyId);
+      scheduleLiveRefresh();
+    }),
+    on('ws:resync', () => refreshList({ silent: true }))
+  );
+  // Переподключение WS — обработчик зарегистрирован выше (teardowns).
   syncBatchBar();
   await refreshList();
+}
+
+/**
+ * Сброс вкладки (выход из аккаунта): снимаем подписки и делегированные
+ * обработчики, очищаем выбор/кэш/DOM — повторный вход монтируется с нуля.
+ */
+export function reset() {
+  teardowns.splice(0).forEach((off) => {
+    try {
+      off();
+    } catch {
+      /* ignore */
+    }
+  });
+  viewContainer?.removeEventListener('click', handleListClick);
+  viewContainer = null;
+  mounted = false;
+  items = [];
+  total = null;
+  selected = new Set();
+  currentAnalysis = { vacancyId: null, title: '' };
+  currentLetter = { vacancyId: null, title: '', content: '' };
+  els = {};
+  const container = document.getElementById('view-analysis');
+  if (container) container.innerHTML = '';
 }
 
 function setFilters(patch) {
@@ -134,6 +165,7 @@ const scheduleLiveRefresh = debounce(() => refreshList({ silent: true }), 2500);
 /* ---------- Загрузка и рендер списка ---------- */
 
 async function refreshList({ silent = false } = {}) {
+  if (!els.list) return; // вкладка сброшена (logout) — обновлять нечего
   const filters = getState().filters;
   if (!silent) els.skeleton.classList.remove('hidden');
   els.empty.classList.add('hidden');
@@ -165,6 +197,7 @@ async function refreshList({ silent = false } = {}) {
 }
 
 function renderList() {
+  if (!els.list) return;
   const threshold = getMatchThreshold();
   els.list.innerHTML = items.map((item) => vacancyCardHTML(item, threshold)).join('');
   els.empty.classList.toggle('hidden', items.length > 0);

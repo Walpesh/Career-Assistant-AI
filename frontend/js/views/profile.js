@@ -4,7 +4,7 @@
    ============================================================ */
 
 import { api } from '../core/api.js';
-import { on } from '../core/bus.js';
+import { emit, on } from '../core/bus.js';
 import { session } from '../core/session.js';
 import {
   getState,
@@ -26,6 +26,8 @@ let skillsInput = null;
 let snapshot = null;   // последнее сохранённое состояние формы
 let mounted = false;
 let awaitingConvert = false;
+/** Функции отписки текущего монтирования (снимаются в reset()). */
+const teardowns = [];
 
 export async function mount() {
   if (mounted) return;
@@ -98,13 +100,13 @@ export async function mount() {
   });
 
   // Синхронизация с главной страницей и сохранённым профилем.
-  on('match:threshold', ({ source }) => {
+  teardowns.push(on('match:threshold', ({ source }) => {
     if (source === 'profile' || !els.threshold) return;
     const threshold = clamp(getMatchThreshold(), 0, 100);
     if (Number(els.threshold.value) === threshold) return;
     els.threshold.value = threshold;
     els.thresholdValue.textContent = `${threshold}%`;
-  });
+  }));
 
   els.saveButton.addEventListener('click', saveProfile);
   els.resetButton.addEventListener('click', resetForm);
@@ -118,21 +120,44 @@ export async function mount() {
   loadAccountOverview();
 
   // Завершение задачи convert_resume приходит по WS.
-  on('ws:task.completed', () => {
-    if (awaitingConvert) {
-      awaitingConvert = false;
-      setConvertLoading(false);
-      refresh();
-    }
-  });
-  on('ws:task.failed', () => {
-    if (awaitingConvert) {
-      awaitingConvert = false;
-      setConvertLoading(false);
-    }
-  });
+  teardowns.push(
+    on('ws:task.completed', () => {
+      if (awaitingConvert) {
+        awaitingConvert = false;
+        setConvertLoading(false);
+        refresh();
+      }
+    }),
+    on('ws:task.failed', () => {
+      if (awaitingConvert) {
+        awaitingConvert = false;
+        setConvertLoading(false);
+      }
+    })
+  );
 
   await refresh();
+}
+
+/**
+ * Сброс вкладки (выход из аккаунта): снимаем подписки, чистим состояние
+ * формы и DOM — следующий вход открывается уже для нового пользователя.
+ */
+export function reset() {
+  teardowns.splice(0).forEach((off) => {
+    try {
+      off();
+    } catch {
+      /* ignore */
+    }
+  });
+  mounted = false;
+  snapshot = null;
+  awaitingConvert = false;
+  skillsInput = null;
+  els = {};
+  const container = document.getElementById('view-profile');
+  if (container) container.innerHTML = '';
 }
 
 export async function refresh() {
@@ -451,13 +476,13 @@ async function deleteAccount() {
     const result = await api.deleteAccount();
     const rows = result?.report?.total_rows_deleted;
     session.clear();
+    // Без location.reload(): обработчик auth:logout в main.js сбрасывает
+    // состояние и вкладки SPA и мгновенно возвращает на экран входа.
+    emit('auth:logout', { silent: true });
     popup.success(
       'Аккаунт удалён',
       rows ? `Удалено записей: ${rows}. Данные аккаунта стёрты.` : 'Данные аккаунта стёрты.'
     );
-    // Перезагрузка — единственный надёжный способ сбросить состояние SPA
-    // после удаления сессии и всех загруженных данных.
-    setTimeout(() => window.location.reload(), 1200);
   } catch (error) {
     toggleLoading(els.deleteButton, false);
     popup.error('Не удалось удалить аккаунт', error.message);

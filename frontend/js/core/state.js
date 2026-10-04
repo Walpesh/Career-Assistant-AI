@@ -89,6 +89,22 @@ export function commitMatchThreshold() {
   notify();
 }
 
+/**
+ * Полный сброс пользовательского состояния (выход из аккаунта, удаление
+ * аккаунта). Без него после повторного входа интерфейс показывал бы данные
+ * прошлого пользователя до перезагрузки страницы.
+ */
+export function resetAppState() {
+  setState({
+    user: null,
+    profile: null,
+    tasks: [],
+    filters: { status: '', source: '', search: '', minScore: '', page: 1, size: 20 },
+    threshold: null,
+    activeTab: 'dashboard'
+  });
+}
+
 export function subscribe(listener) {
   listeners.add(listener);
   return () => listeners.delete(listener);

@@ -7,6 +7,7 @@
 import { api } from './api.js';
 import { on } from './bus.js';
 import { setState, subscribe } from './state.js';
+import { popup } from '../components/fadeout-action-popup.js';
 
 const ACTIVE_STATUSES = new Set(['pending', 'processing', 'waiting_captcha']);
 
@@ -52,6 +53,20 @@ export function getCurrentTasks() {
   return currentTasks;
 }
 
+/**
+ * Завершённые статусы. WS-события не должны «оживлять» или перетирать их:
+ * после реконнекта или отмены задачи могло прийти запаздывающее событие.
+ */
+const TERMINAL_STATUSES = new Set(['completed', 'failed']);
+
+function findTask(id) {
+  return currentTasks.find((item) => item.id === id);
+}
+
+function isTerminal(task) {
+  return Boolean(task) && TERMINAL_STATUSES.has(task.status);
+}
+
 /** Подписка на WS-события задач + первичная загрузка. */
 let initialized = false;
 
@@ -67,19 +82,41 @@ export async function initTaskTracking() {
 
   on('ws:task.created', (payload) => {
     if (!payload?.task_id) return;
+    const existing = findTask(payload.task_id);
+    // Догоняющее/дублированное событие не должно откатывать завершённую
+    // задачу обратно в pending.
+    if (isTerminal(existing)) return;
     upsert({
       id: payload.task_id,
-      task_type: payload.task_type,
-      status: payload.status || 'pending',
-      progress_current: 0,
-      progress_total: 0,
-      created_at: payload.created_at || new Date().toISOString()
+      ...(payload.task_type ? { task_type: payload.task_type } : {}),
+      ...(payload.created_at ? { created_at: payload.created_at } : {}),
+      status: payload.status || existing?.status || 'pending',
+      progress_current: existing?.progress_current ?? 0,
+      progress_total: existing?.progress_total ?? 0
+    });
+  });
+
+  // task.started (docs/03 §8): воркер взял задачу из очереди. Без этого
+  // обработчика карточка до первого progress «висела» как «В очереди».
+  on('ws:task.started', (payload) => {
+    if (!payload?.task_id) return;
+    const existing = findTask(payload.task_id);
+    if (isTerminal(existing)) return;
+    upsert({
+      id: payload.task_id,
+      ...(payload.task_type ? { task_type: payload.task_type } : {}),
+      status: 'processing',
+      started_at: payload.started_at || new Date().toISOString(),
+      error_message: null
     });
   });
 
   on('ws:task.progress', (payload) => {
     if (!payload?.task_id) return;
-    const existing = currentTasks.find((item) => item.id === payload.task_id);
+    const existing = findTask(payload.task_id);
+    // Запаздывающий прогресс завершённой задачи игнорируем — иначе
+    // «Завершена» снова превратилась бы в «В обработке».
+    if (isTerminal(existing)) return;
     // waiting_captcha — терминальное для прогресса состояние (docs/04 §5):
     // событие прогресса не должно «оживлять» задачу до ручного вмешательства.
     const status = existing?.status === 'waiting_captcha' ? 'waiting_captcha' : 'processing';
@@ -95,24 +132,53 @@ export async function initTaskTracking() {
 
   on('ws:task.completed', (payload) => {
     if (!payload?.task_id) return;
-    upsert({ id: payload.task_id, status: 'completed', result: payload.result ?? null, finished_at: new Date().toISOString() });
+    const existing = findTask(payload.task_id);
+    if (isTerminal(existing) && existing.status !== 'completed') return;
+    upsert({
+      id: payload.task_id,
+      status: 'completed',
+      result: payload.result ?? null,
+      error_message: null,
+      finished_at: new Date().toISOString()
+    });
   });
 
   on('ws:task.failed', (payload) => {
     if (!payload?.task_id) return;
+    const existing = findTask(payload.task_id);
+    if (isTerminal(existing)) return;
     // waiting_captcha приходит как task.failed со status (docs/03 §8):
     // капча — это пауза задачи, а не её финальная ошибка.
-    const status = payload.status === 'waiting_captcha' ? 'waiting_captcha' : 'failed';
+    if (payload.status === 'waiting_captcha') {
+      const alreadyWaiting = existing?.status === 'waiting_captcha';
+      upsert({
+        id: payload.task_id,
+        status: 'waiting_captcha',
+        error_message: payload.error || 'Требуется прохождение капчи hh.ru',
+        finished_at: null
+      });
+      // Уведомляем один раз за эпизод: пауза требует действий пользователя.
+      if (!alreadyWaiting) {
+        popup.warning(
+          'Требуется капча hh.ru',
+          payload.error ||
+            'Пройдите капчу и нажмите «Капча пройдена — продолжить» в карточке задачи.'
+        );
+      }
+      return;
+    }
     upsert({
       id: payload.task_id,
-      status,
+      status: 'failed',
       error_message: payload.error || 'Неизвестная ошибка',
-      finished_at: status === 'failed' ? new Date().toISOString() : null
+      finished_at: new Date().toISOString()
     });
   });
 
   on('ws:task.cancelled', (payload) => {
     if (!payload?.task_id) return;
+    // Отмена финализирует задачу — повторное task.failed после неё не нужно.
+    if (isTerminal(findTask(payload.task_id))) return;
     upsert({
       id: payload.task_id,
       status: payload.status || 'failed',

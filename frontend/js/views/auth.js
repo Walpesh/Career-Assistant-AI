@@ -131,3 +131,15 @@ export function initAuth(callback) {
     }
   });
 }
+
+/**
+ * Сброс экрана входа после выхода из аккаунта: поле пароля очищено
+ * (не храним чужие креды в DOM), активна вкладка «Вход».
+ */
+export function resetAuth() {
+  const password = document.getElementById('login-password');
+  if (password) password.value = '';
+  const consent = document.getElementById('register-consent');
+  if (consent) consent.checked = false;
+  document.querySelector('[data-auth-tab="login"]')?.click();
+}

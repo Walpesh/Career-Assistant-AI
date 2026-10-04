@@ -12,7 +12,8 @@
 /* ---------- Fadeout-action-popup (кастомный компонент) ---------- */
 fadeout-action-popup {
   position: fixed;
-  top: 1rem;
+  /* Ниже шапки приложения (h-16): тосты не перекрывают кнопки топбара. */
+  top: 4.75rem;
   right: 1rem;
   z-index: 100;
   display: flex;
@@ -20,6 +21,12 @@ fadeout-action-popup {
   gap: 0.625rem;
   width: 22.5rem;
   max-width: calc(100vw - 2rem);
+  /* Стек из MAX_VISIBLE уведомлений не выходит за экран: остаток скроллится. */
+  max-height: calc(100dvh - 6.5rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #334155 transparent;
   pointer-events: none;
 }
 
@@ -34,6 +41,8 @@ fadeout-action-popup {
   box-shadow: 0 24px 50px -24px rgb(0 0 0 / 0.85);
   backdrop-filter: blur(8px);
   animation: fap-in 0.28s cubic-bezier(0.21, 1.02, 0.73, 1) both;
+  /* Длинные URL/токены в тексте уведомления не рвут карточку и вёрстку. */
+  overflow-wrap: anywhere;
 }
 .fap-item.fap-leaving { animation: fap-out 0.3s ease forwards; pointer-events: none; }
 

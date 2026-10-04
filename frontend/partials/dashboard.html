@@ -181,6 +181,11 @@
         <button id="btn-refresh-tasks" type="button" class="btn-ghost btn-sm">Обновить</button>
       </div>
     </div>
+    <!-- Скелетон первой загрузки: показывается только при пустом списке -->
+    <div id="tasks-skeleton" class="hidden space-y-2" aria-hidden="true">
+      <div class="skeleton h-16"></div>
+      <div class="skeleton h-16"></div>
+    </div>
     <div id="tasks-list" class="space-y-3">
       <div id="tasks-empty" class="rounded-xl border border-dashed border-slate-800 p-6 text-center text-sm text-slate-500">
         Задач пока нет. Запустите парсинг или обработку вакансий.

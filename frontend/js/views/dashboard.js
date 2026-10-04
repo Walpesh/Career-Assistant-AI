@@ -25,6 +25,8 @@ let keywordsInput = null;
 const blacklistInputs = new Map();
 let mounted = false;
 const cardMap = new Map();
+/** Функции отписки текущего монтирования (снимаются в reset()). */
+const teardowns = [];
 
 export async function mount() {
   if (mounted) return;
@@ -47,6 +49,7 @@ export async function mount() {
     manualButton: document.getElementById('btn-parse-manual'),
     list: document.getElementById('tasks-list'),
     empty: document.getElementById('tasks-empty'),
+    skeleton: document.getElementById('tasks-skeleton'),
     count: document.getElementById('tasks-count'),
     refreshButton: document.getElementById('btn-refresh-tasks')
   };
@@ -79,9 +82,41 @@ export async function mount() {
   // Порог матчинга по умолчанию берётся из профиля (docs/02 §3.2) и
   // синхронизируется с вкладкой «Моё резюме» без конфликтов.
   syncThresholdFromStore();
-  on('match:threshold', ({ source }) => syncThresholdFromStore(source));
-  subscribe(() => renderTasks());
-  await refreshTasks();
+  teardowns.push(
+    on('match:threshold', ({ source }) => syncThresholdFromStore(source)),
+    subscribe(() => renderTasks())
+  );
+
+  // Скелетон показываем только при пустом списке: при повторном открытии
+  // вкладки данные уже в store и мигание скелетона выглядело бы дефектом.
+  const showSkeleton = getCurrentTasks().length === 0;
+  if (showSkeleton) els.skeleton?.classList.remove('hidden');
+  try {
+    await refreshTasks();
+  } finally {
+    els.skeleton?.classList.add('hidden');
+  }
+}
+
+/**
+ * Сброс вкладки (выход из аккаунта): снимаем подписки, чистим кэши
+ * карточек и DOM, чтобы следующий вход монтировался с нуля без reload.
+ */
+export function reset() {
+  teardowns.splice(0).forEach((off) => {
+    try {
+      off();
+    } catch {
+      /* ignore */
+    }
+  });
+  mounted = false;
+  cardMap.clear();
+  blacklistInputs.clear();
+  keywordsInput = null;
+  els = {};
+  const container = document.getElementById('view-dashboard');
+  if (container) container.innerHTML = '';
 }
 
 /**
