@@ -1,6 +1,8 @@
 """Настройки приложения (переменные окружения / .env)."""
 
 from functools import lru_cache
+from pathlib import Path
+from typing import Literal
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -10,11 +12,36 @@ INSECURE_JWT_SECRET = "change-me-in-production"
 #: Минимальная длина JWT-секрета в production (docs/03 §2 — HS256).
 MIN_JWT_SECRET_LENGTH = 32
 
+#: Каталог backend/ (backend/app/core/config.py → parents[2]).
+#:
+#: ``.env`` ищется по этому абсолютному пути, а не относительно текущего
+#: рабочего каталога: запуск из корня репозитория, из ``backend/`` и из
+#: Docker (WORKDIR /app) иначе молча читают разные (или никакие) файлы
+#: окружения — вплоть до «настроенного, но не прочитанного» SMTP.
+BACKEND_DIR = Path(__file__).resolve().parents[2]
+
+#: Файлы окружения в порядке приоритета: ``backend/.env`` — база,
+#: ``.env`` в CWD (docker-compose, одноразовые запуски) — перекрывает её.
+ENV_FILES = (BACKEND_DIR / ".env", ".env")
+
+#: Режим шифрования SMTP-соединения (docs/03 §2).
+SmtpSecurity = Literal["starttls", "ssl", "none"]
+
 
 class Settings(BaseSettings):
     """Конфигурация Career-Assistant-AI (см. backend/.env.example)."""
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=ENV_FILES,
+        env_file_encoding="utf-8",
+        extra="ignore",
+        # Переменная, заданная пустой строкой, равносильна отсутствующей:
+        # ``REFRESH_COOKIE_SECURE=`` в .env.example означает «Secure — авто»
+        # (None), а не «строка, которую нельзя разобрать как bool».
+        # Без этого приложение падало бы на старте из-за собственного
+        # примера окружения.
+        env_ignore_empty=True,
+    )
 
     # --- Общее ---
     app_name: str = "Career-Assistant-AI"
@@ -98,16 +125,17 @@ class Settings(BaseSettings):
     refresh_token_reuse_detection: bool = True
 
     # --- SMTP и email-верификация (Auth Module, docs/03 §2) ---
-    #: SMTP-сервер исходящих писем. Пусто → письма не отправляются,
-    #: OTP-код только логируется (development без SMTP-сервера).
+    #: SMTP-сервер исходящих писем. Пусто → отправка невозможна: в dev код
+    #: только логируется, в production такой конфиг запрещён (fail-fast ниже).
     smtp_host: str = ""
-    #: Порт SMTP: 587 — STARTTLS, 465 — SSL (см. smtp_security).
+    #: Порт SMTP: 587 — STARTTLS, 465 — implicit SSL (согласуется с
+    #: smtp_security: расхождение — частая причина «письма не уходят»).
     smtp_port: int = 587
     #: Логин SMTP (пусто → анонимное соединение, только для dev-серверов).
     smtp_user: str = ""
     smtp_password: str = ""
     #: Режим шифрования соединения: starttls | ssl | none.
-    smtp_security: str = "starttls"
+    smtp_security: SmtpSecurity = "starttls"
     #: Отправитель письма: "Имя <адрес>" либо просто адрес.
     emails_from: str = "Career-Assistant-AI <noreply@example.com>"
     #: Срок жизни OTP-кода верификации, минут (ТЗ: 10 минут).
@@ -238,6 +266,16 @@ class Settings(BaseSettings):
         return self.environment.strip().lower() == "production"
 
     @property
+    def smtp_configured(self) -> bool:
+        """Настроен ли исходящий SMTP.
+
+        Без него письма не уходят в принципе: OTP-код существует только в
+        письме, поэтому в production такой конфиг запрещён (fail-fast),
+        а в development ``send_verification_email`` печатает код в лог.
+        """
+        return bool(self.smtp_host.strip())
+
+    @property
     def db_echo(self) -> bool:
         """SQL echo: только в debug и НИКОГДА в production (иначе DSN в логах)."""
         return bool(self.debug) and not self.is_production
@@ -267,10 +305,14 @@ class Settings(BaseSettings):
         """Fail-fast проверки безопасности конфигурации.
 
         - production не должен стартовать с дефолтным/коротким JWT_SECRET;
-        - CORS не должен разрешать wildcard '*' вместе с credentials=true.
+        - CORS не должен разрешать wildcard '*' вместе с credentials=true;
         - production не должен поднимать встроенные воркеры
           (QUEUE_EMBEDDED_WORKERS=false): API и воркеры — независимые
-          рантаймы (worker-parsing ×N, worker-llm строго ×1, docs/01 §6).
+          рантаймы (worker-parsing ×N, worker-llm строго ×1, docs/01 §6);
+        - production обязан иметь SMTP_HOST: OTP-код существует только в
+          письме, поэтому без отправки регистрация не завершается никогда.
+          Молча поднимать сервис, который не может отправить код, хуже, чем
+          не подняться вовсе: сбой виден сразу, а не как «письма не приходят».
         """
         if self.is_production:
             if self.jwt_secret == INSECURE_JWT_SECRET:
@@ -288,6 +330,12 @@ class Settings(BaseSettings):
                     "ENVIRONMENT=production requires QUEUE_EMBEDDED_WORKERS=false "
                     "(run workers as separate runtimes: worker-parsing ×N, "
                     "worker-llm strictly ×1)"
+                )
+            if not self.smtp_configured:
+                raise ValueError(
+                    "ENVIRONMENT=production requires SMTP_HOST (email OTP codes "
+                    "are delivered only by email; set SMTP_HOST/SMTP_PORT/"
+                    "SMTP_USER/SMTP_PASSWORD or registration cannot be completed)"
                 )
 
         origins = self.cors_origin_list

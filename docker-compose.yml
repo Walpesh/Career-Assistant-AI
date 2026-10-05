@@ -15,9 +15,11 @@ x-common-env: &common-env
   TRUSTED_HOSTS: ${TRUSTED_HOSTS:-api,localhost,frontend}
   QUEUE_EMBEDDED_WORKERS: "false"
   QUEUE_RECOVER_ON_STARTUP: "true"
-  # Email OTP (docs/03 §2). SMTP_HOST пустой → письма не отправляются, и тогда
-  # подтвердить регистрацию невозможно: в production задайте реальный сервер.
-  SMTP_HOST: ${SMTP_HOST:-}
+  # Email OTP (docs/03 §2). SMTP_HOST обязателен: без него OTP-код некуда
+  # отправить и регистрацию невозможно завершить. Вторая линия защиты —
+  # fail-fast в app.core.config.Settings при ENVIRONMENT=production.
+  # 465 требует SMTP_SECURITY=ssl, 587/2525 — starttls (проверяется в mail.py).
+  SMTP_HOST: ${SMTP_HOST:?SMTP_HOST is required in production}
   SMTP_PORT: ${SMTP_PORT:-587}
   SMTP_USER: ${SMTP_USER:-}
   SMTP_PASSWORD: ${SMTP_PASSWORD:-}

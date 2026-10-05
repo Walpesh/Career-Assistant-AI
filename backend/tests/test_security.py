@@ -1,7 +1,8 @@
 """Security regression tests (TASK: security hardening).
 
 Покрытие:
-    - fail-fast конфигурации: production с дефолтным/коротким JWT_SECRET падает;
+    - fail-fast конфигурации: production с дефолтным/коротким JWT_SECRET падает,
+      как и production без SMTP_HOST (иначе OTP-код некуда отправить);
     - запрет CORS wildcard '*' вместе с credentials;
     - SQL echo выключён вне debug/production (нет утечки DSN в логи);
     - security-заголовки (CSP, X-Frame-Options, Referrer-Policy);
@@ -58,13 +59,19 @@ def test_production_short_jwt_secret_fails_fast():
         )
 
 
+#: Валидный production-конфиг: сильный JWT, отдельные воркеры, SMTP.
+#: SMTP_HOST обязателен (fail-fast в Settings): без него OTP-код некуда
+#: отправить и регистрация не завершается.
+PROD_KWARGS = {
+    "environment": "production",
+    "jwt_secret": "a" * 40,
+    "queue_embedded_workers": False,
+    "smtp_host": "smtp.example.com",
+}
+
+
 def test_production_strong_jwt_secret_is_accepted():
-    s = Settings(
-        environment="production",
-        jwt_secret="a" * 40,
-        queue_embedded_workers=False,
-        _env_file=None,
-    )
+    s = Settings(**PROD_KWARGS, _env_file=None)
     assert s.is_production is True
 
 
@@ -80,15 +87,45 @@ def test_production_embedded_workers_fails_fast():
 
 
 def test_effective_embedded_workers_false_in_production():
-    s = Settings(
-        environment="production",
-        jwt_secret="a" * 40,
-        queue_embedded_workers=False,
-        _env_file=None,
-    )
+    s = Settings(**PROD_KWARGS, _env_file=None)
     assert s.effective_embedded_workers is False
     dev = Settings(environment="development", _env_file=None)
     assert dev.effective_embedded_workers is True
+
+
+def test_production_without_smtp_host_fails_fast():
+    """Production без SMTP_HOST падает на старте (fail-fast).
+
+    OTP-код существует только в письме: поднять сервис без отправки значит
+    гарантированно не работающую регистрацию, но с «успешными» 201.
+    """
+    with pytest.raises(ValueError, match="SMTP_HOST"):
+        Settings(
+            environment="production",
+            jwt_secret="a" * 40,
+            queue_embedded_workers=False,
+            smtp_host="",
+            _env_file=None,
+        )
+
+
+def test_production_with_whitespace_smtp_host_fails_fast():
+    """Пробелы в SMTP_HOST — тоже «не настроено» (иначе отправка падает)."""
+    with pytest.raises(ValueError, match="SMTP_HOST"):
+        Settings(
+            environment="production",
+            jwt_secret="a" * 40,
+            queue_embedded_workers=False,
+            smtp_host="   ",
+            _env_file=None,
+        )
+
+
+def test_smtp_configured_reflects_host_presence():
+    """``smtp_configured`` — единственный источник правды про наличие SMTP."""
+    assert Settings(smtp_host="smtp.example.com", _env_file=None).smtp_configured is True
+    assert Settings(smtp_host="", _env_file=None).smtp_configured is False
+    assert Settings(smtp_host="  ", _env_file=None).smtp_configured is False
 
 
 def test_cors_wildcard_with_credentials_is_rejected():
@@ -99,23 +136,12 @@ def test_cors_wildcard_with_credentials_is_rejected():
 def test_db_echo_disabled_outside_debug_and_production():
     assert Settings(debug=False, _env_file=None).db_echo is False
     assert Settings(debug=True, environment="development", _env_file=None).db_echo is True
-    assert (
-        Settings(
-            debug=True,
-            environment="production",
-            jwt_secret="a" * 40,
-            queue_embedded_workers=False,
-            _env_file=None,
-        ).db_echo
-        is False
-    )
+    assert Settings(debug=True, **PROD_KWARGS, _env_file=None).db_echo is False
 
 
 def test_secure_cookies_auto_in_production():
     dev = Settings(_env_file=None)
-    prod = Settings(
-        environment="production", jwt_secret="a" * 40, queue_embedded_workers=False, _env_file=None
-    )
+    prod = Settings(**PROD_KWARGS, _env_file=None)
     assert dev.secure_cookies is False
     assert prod.secure_cookies is True
 

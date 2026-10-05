@@ -14,10 +14,17 @@
 Таблицы: users (docs/02_DATABASE.md §3.1) + создаётся профиль
 user_profiles (§3.2) — «Моё резюме» доступно сразу после регистрации;
 OTP-коды хранятся в email_otps (10 минут TTL, максимум 5 попыток).
+
+Доставка кода не может «врать» об успехе (docs/03 §2): в development без
+SMTP код печатается в лог и регистрация не блокируется, в production любой
+отказ отправки — ``503 SMTP_UNAVAILABLE``, потому что «201 + код отправлен»
+при недоставленном письме означает, что пользователь бесконечно ждёт
+несуществующее письмо.
 """
 
 from __future__ import annotations
 
+import logging
 import uuid
 
 from fastapi import (
@@ -30,6 +37,7 @@ from fastapi import (
     status,
 )
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import mail
@@ -74,7 +82,52 @@ from app.modules.auth.tokens import (
 )
 from app.modules.auth.ws_tickets import create_ws_ticket
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+#: error_code отказа почтового сервиса (docs/03 §1 — единый формат ошибок).
+SMTP_UNAVAILABLE = "SMTP_UNAVAILABLE"
+
+
+async def _deliver_code(background_tasks: BackgroundTasks, email: str, code: str) -> bool:
+    """Отправить OTP-код и сообщить вызывающему, ушло ли письмо.
+
+    Development: отправка уходит в BackgroundTask (не держит ответ), а если
+    SMTP не настроен, код печатается в лог — локальная разработка не встаёт
+    колом. Production: отправка синхронная, и её результат определяет ответ
+    эндпоинта, иначе «201 Verification code sent» означал бы отправку кода,
+    которого пользователь никогда не увидит.
+
+    Returns:
+        ``True`` — письмо ушло (или dev-режим без SMTP, где код в логе);
+        ``False`` — доставка не удалась и эндпоинт обязан сообщить об этом.
+
+    Raises:
+        AppError: 503 SMTP_UNAVAILABLE — production и доставка не удалась.
+    """
+    if not settings.is_production:
+        background_tasks.add_task(mail.send_verification_email, email, code)
+        # Код дублируется в лог именно для development без SMTP: без этого
+        # разработчик не может завершить регистрацию локально.
+        if not settings.smtp_configured:
+            logger.warning(
+                "SMTP не настроен (development) — OTP-код для %s: %s", email, code
+            )
+        return True
+
+    delivered = await mail.send_verification_email(email, code)
+    if not delivered:
+        logger.error(
+            "Письмо с OTP-кодом на %s не доставлено — отвечаем 503 вместо успеха",
+            email,
+        )
+        raise AppError(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Email service unavailable",
+            SMTP_UNAVAILABLE,
+        )
+    return True
 
 
 def _user_id(value: str) -> uuid.UUID:
@@ -125,32 +178,64 @@ async def register(
 ) -> VerificationSent:
     """Создаёт неверифицированный аккаунт и отправляет 6-значный OTP-код.
 
-    409 — email уже занят (docs/03 §9). Пара JWT НЕ выдаётся: токены
-    возвращает только POST /auth/verify-email после подтверждения email.
+    Повторная регистрация **неподтверждённого** email не конфликтует, а
+    обновляет пароль и перевыпускает код (владелец мог не получить письмо):
+    пересоздать пользователя нельзя — email уникален, и вставка дубля падала
+    бы на индексе. 409 EMAIL_TAKEN отдаётся только для **подтверждённого**
+    email — там смена пароля означала бы захват чужого аккаунта (docs/03 §9).
+
+    Пара JWT НЕ выдаётся: токены возвращает только POST /auth/verify-email
+    после подтверждения email. Если в production письмо не доставилось —
+    503 SMTP_UNAVAILABLE, а не ложное «код отправлен».
     """
     existing = await db.scalar(select(User).where(User.email == payload.email))
     if existing is not None:
+        if existing.is_verified:
+            # Подтверждённый email принадлежит владельцу: не раскрываем, что
+            # он зарегистрирован И подтверждён (иначе эндпоинт позволял бы
+            # перебирать адреса), но и не позволяем перерегистрацию.
+            raise AppError(
+                status.HTTP_409_CONFLICT,
+                "Пользователь с таким email уже зарегистрирован",
+                "EMAIL_TAKEN",
+            )
+        # Неподтверждённый аккаунт: обновляем пароль и перевыпускаем код.
+        # Старый код при этом перестаёт работать (issue_otp удаляет запись),
+        # то есть владение email всё равно нужно подтвердить заново.
+        existing.password_hash = hash_password(payload.password)
+        if await db.scalar(
+            select(UserProfile).where(UserProfile.user_id == existing.id)
+        ) is None:
+            # Подстраховка от «полурегистрации» без профиля (docs/02 §4).
+            db.add(UserProfile(user_id=existing.id))
+        logger.info("Повторная регистрация неподтверждённого email — выдан новый OTP")
+    else:
+        user = User(
+            email=payload.email,
+            password_hash=hash_password(payload.password),
+            is_active=True,
+            is_verified=False,
+        )
+        db.add(user)
+        await db.flush()  # присваивает user.id (UUID)
+        db.add(UserProfile(user_id=user.id))  # профиль 1:1 (docs/02 §4)
+
+    # Код — в базу (хэш), письмо — по результату отправки (см. _deliver_code).
+    code = await issue_otp(db, payload.email)
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        # Гонка двух параллельных регистраций одного email: уникальный индекс
+        # отработал на коммите. Честный конфликт 409 вместо 500.
+        await db.rollback()
+        logger.info("Конкурентная регистрация email %s → 409 EMAIL_TAKEN", payload.email)
         raise AppError(
             status.HTTP_409_CONFLICT,
             "Пользователь с таким email уже зарегистрирован",
             "EMAIL_TAKEN",
-        )
+        ) from exc
 
-    user = User(
-        email=payload.email,
-        password_hash=hash_password(payload.password),
-        is_active=True,
-        is_verified=False,
-    )
-    db.add(user)
-    await db.flush()  # присваивает user.id (UUID)
-    db.add(UserProfile(user_id=user.id))  # профиль 1:1 (docs/02 §4)
-
-    # Код — в базу (хэш), письмо — фоновой задачей после ответа.
-    code = await issue_otp(db, payload.email)
-    await db.commit()
-
-    background_tasks.add_task(mail.send_verification_email, payload.email, code)
+    await _deliver_code(background_tasks, payload.email, code)
     return VerificationSent(message="Verification code sent to email", email=payload.email)
 
 
@@ -218,6 +303,9 @@ async def resend_code(
     Rate-limit: не чаще ``otp_resend_interval_seconds`` (60) с момента
     последней отправки — иначе 429 + ``Retry-After``. Ответ одинаков для
     несуществующего/подтверждённого email (защита от enumeration).
+
+    В production отправка синхронная: неудача — ``503 SMTP_UNAVAILABLE``,
+    чтобы «200 + код отправлен» не означал недоставленное письмо.
     """
     user = await db.scalar(select(User).where(User.email == payload.email))
     if user is None or user.is_verified:
@@ -236,7 +324,7 @@ async def resend_code(
     code = await issue_otp(db, payload.email)
     await db.commit()
 
-    background_tasks.add_task(mail.send_verification_email, payload.email, code)
+    await _deliver_code(background_tasks, payload.email, code)
     return VerificationSent(message="Verification code sent to email", email=payload.email)
 
 
