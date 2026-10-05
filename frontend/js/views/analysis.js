@@ -21,6 +21,8 @@ let total = null;
 let selected = new Set();
 let currentAnalysis = { vacancyId: null, title: '' };
 let currentLetter = { vacancyId: null, title: '', content: '' };
+/** Кэш текстов писем: vacancyId → content (заполняется в loadLetter/отклике). */
+const letterCache = new Map();
 /** Функции отписки текущего монтирования (снимаются в reset()). */
 const teardowns = [];
 /** Контейнер вкладки — держим ссылку, чтобы снять делегированный клик. */
@@ -121,6 +123,7 @@ export async function mount() {
     on('ws:vacancy.updated', () => scheduleLiveRefresh()),
     on('ws:analysis.ready', () => scheduleLiveRefresh()),
     on('ws:letter.ready', (payload) => {
+      if (payload?.vacancy_id) letterCache.delete(payload.vacancy_id);
       if (currentLetter.vacancyId && payload?.vacancy_id === currentLetter.vacancyId) loadLetter(currentLetter.vacancyId);
       scheduleLiveRefresh();
     }),
@@ -151,6 +154,7 @@ export function reset() {
   selected = new Set();
   currentAnalysis = { vacancyId: null, title: '' };
   currentLetter = { vacancyId: null, title: '', content: '' };
+  letterCache.clear();
   els = {};
   const container = document.getElementById('view-analysis');
   if (container) container.innerHTML = '';
@@ -216,6 +220,9 @@ function vacancyCardHTML(vacancy, threshold) {
   const canViewAnalysis = ['analyzed', 'letter_ready', 'applied'].includes(status);
   const canViewLetter = ['letter_ready', 'applied'].includes(status);
   const canApply = !['applied', 'error'].includes(status);
+  // «Откликнуться» доступно только при наличии письма и hh_vacancy_id для ссылки отклика.
+  const hasLetterContent = Boolean(vacancy.cover_letter?.content);
+  const canRespond = Boolean(vacancy.hh_vacancy_id) && (status === 'letter_ready' || hasLetterContent);
 
   return `<article class="card p-4 ${isSelected ? 'border-indigo-500/50' : ''}" data-vacancy-id="${escapeHtml(vacancy.id)}">
     <div class="flex items-start gap-3">
@@ -243,6 +250,7 @@ function vacancyCardHTML(vacancy, threshold) {
     <div class="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-800/70 pt-3">
       ${canViewAnalysis ? '<button type="button" data-action="view-analysis" class="btn-secondary btn-sm">Анализ</button>' : ''}
       ${canViewLetter ? '<button type="button" data-action="view-letter" class="btn-secondary btn-sm">Письмо</button>' : ''}
+      ${canRespond ? '<button type="button" data-action="respond" class="btn-primary btn-sm">Откликнуться</button>' : ''}
       ${canApply ? '<button type="button" data-action="mark-applied" class="btn-ghost btn-sm">Откликнулся</button>' : ''}
       ${status === 'error' ? '<span class="text-xs text-rose-300">Ошибка обработки — проверьте журнал</span>' : ''}
       <button type="button" data-action="delete" class="btn-ghost btn-sm ml-auto text-rose-300 hover:text-rose-200">Удалить</button>
@@ -301,9 +309,59 @@ async function handleListClick(event) {
   switch (action) {
     case 'view-analysis': return openAnalysisModal(vacancyId, vacancy?.title);
     case 'view-letter': return openLetterDrawer(vacancyId, vacancy?.title);
+    case 'respond': return respondToVacancy(vacancy);
     case 'mark-applied': return markApplied(vacancyId);
     case 'delete': return deleteVacancy(vacancyId, vacancy?.title);
     default: return undefined;
+  }
+}
+
+/* ---------- Прямой отклик на hh.ru ---------- */
+
+/** Точный текст успешного уведомления (используется в acceptance-критерии). */
+const RESPOND_COPIED_MESSAGE = 'Письмо скопировано. Вставьте его (Ctrl+V) в поле сопроводительного письма на hh.ru';
+const RESPOND_COPY_FAILED_MESSAGE = 'Браузер запретил доступ к буферу обмена. Скопируйте письмо вручную через кнопку «Письмо» и вставьте его на hh.ru.';
+
+/**
+ * Текст письма: из объекта вакансии → из кэша → из API GET /letters/{id}.
+ * @returns {Promise<string>} '' — письма нет
+ */
+async function fetchLetterContent(vacancy) {
+  if (vacancy?.cover_letter?.content) return vacancy.cover_letter.content;
+  const cached = letterCache.get(vacancy?.id);
+  if (cached) return cached;
+  const letter = await api.getLetter(vacancy.id);
+  const content = letter?.content || letter?.letter_text || '';
+  if (content) letterCache.set(vacancy.id, content);
+  return content;
+}
+
+/**
+ * «Откликнуться»: копирует письмо в буфер и открывает страницу отклика hh.ru.
+ * Вкладка открывается синхронно внутри обработчика клика, иначе браузер
+ * заблокирует её как popup. Ошибка копирования не блокирует открытие.
+ */
+async function respondToVacancy(vacancy) {
+  if (!vacancy) return;
+  const hhId = vacancy.hh_vacancy_id;
+  if (!hhId) {
+    popup.warning('Отклик недоступен', 'У вакансии нет идентификатора hh.ru — откройте её по ссылке вручную.');
+    return;
+  }
+
+  window.open(`https://hh.ru/applicant/vacancy_response?vacancyId=${encodeURIComponent(hhId)}`, '_blank', 'noopener,noreferrer');
+
+  try {
+    const content = await fetchLetterContent(vacancy);
+    if (!content) {
+      popup.warning('Письмо не найдено', 'Сгенерируйте сопроводительное письмо и повторите отклик.');
+      return;
+    }
+    const copied = await copyText(content);
+    if (copied) popup.success('Готово', RESPOND_COPIED_MESSAGE);
+    else popup.warning('Не удалось скопировать письмо', RESPOND_COPY_FAILED_MESSAGE);
+  } catch (error) {
+    popup.warning('Не удалось скопировать письмо', RESPOND_COPY_FAILED_MESSAGE);
   }
 }
 
@@ -469,6 +527,7 @@ async function loadLetter(vacancyId) {
     const letter = await api.getLetter(vacancyId);
     const content = letter?.content || letter?.letter_text || '';
     currentLetter.content = content;
+    if (content) letterCache.set(vacancyId, content);
     document.getElementById('letter-content').textContent = content || 'Письмо ещё не создано — запустите генерацию.';
     document.getElementById('letter-version').textContent = `v${letter?.version ?? 1}`;
     document.getElementById('letter-updated').textContent = letter?.updated_at ? `обновлено: ${formatDateTime(letter.updated_at)}` : '';

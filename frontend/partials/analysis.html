@@ -83,7 +83,9 @@
     <div class="skeleton h-24"></div>
   </div>
 
-  <!-- Список вакансий -->
+  <!-- Список вакансий. Карточки (в т.ч. actions «Анализ» / «Письмо» / «Откликнуться» /
+       «Откликнулся» / «Удалить») рендерит vacancyCardHTML() в js/views/analysis.js;
+       кнопка «Откликнуться» показывается только при наличии сопроводительного письма. -->
   <div id="vacancy-list" class="space-y-3"></div>
 
   <div id="vacancy-empty" class="hidden rounded-2xl border border-dashed border-slate-800 p-10 text-center">
