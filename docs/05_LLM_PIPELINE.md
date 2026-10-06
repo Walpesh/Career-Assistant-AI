@@ -200,13 +200,16 @@ letter = append_resume_addition(letter, profile.resume_addition)
 
 ```json
 {
-  "temperature": 0.35,          // для анализа
-  "temperature": 0.55,          // для генерации писем
+  "temperature_analysis": 0.35,
+  "temperature_letter": 0.55,
   "top_p": 0.9,
   "num_ctx": 8192,
   "repeat_penalty": 1.1
 }
 ```
+
+Фактически температуры зашиты в коде: анализ — `0.35`, письмо — `0.55`
+(`backend/app/modules/analysis_letter/llm.py`).
 
 Для анализа рекомендуется более детерминированная температура, для писем — чуть выше, чтобы текст был живым.
 
@@ -218,4 +221,3 @@ letter = append_resume_addition(letter, profile.resume_addition)
 - Создаётся новая запись в `cover_letters` с `version = previous + 1`
 - Или обновляется существующая запись (на выбор реализации)
 - В интерфейсе пользователь видит актуальную версию + возможность посмотреть предыдущие
-```

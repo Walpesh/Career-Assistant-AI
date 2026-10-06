@@ -25,6 +25,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Computed,
     Date,
     DateTime,
     ForeignKey,
@@ -152,8 +153,11 @@ class Vacancy(Base, TimestampMixin):
             "status IN ('raw', 'analyzed', 'letter_ready', 'applied', 'error')",
             name="ck_vacancies_status",
         ),
+        # 'hh' — источник по умолчанию (multi-source, docs/04 §10.4);
+        # 'auto'/'group'/'manual' — режимы ввода, сохранённые для
+        # обратной совместимости фильтров API и контракта docs/02 §3.3.
         CheckConstraint(
-            "source IN ('auto', 'group', 'manual')",
+            "source IN ('hh', 'auto', 'group', 'manual')",
             name="ck_vacancies_source",
         ),
         CheckConstraint(
@@ -162,6 +166,15 @@ class Vacancy(Base, TimestampMixin):
         ),
         # Уникальность вакансии на пользователя (docs/02 §1, §3.3)
         Index("uq_vacancies_user_hh_vacancy", "user_id", "hh_vacancy_id", unique=True),
+        # Составной ключ мульти-источникового парсинга (docs/04 §10.4):
+        # одна вакансия источника не дублируется у пользователя.
+        Index(
+            "uq_vacancies_user_source_external",
+            "user_id",
+            "source",
+            "external_id",
+            unique=True,
+        ),
         Index("ix_vacancies_user_status", "user_id", "status"),
         Index("ix_vacancies_user_created_at", "user_id", text("created_at DESC")),
     )
@@ -196,7 +209,23 @@ class Vacancy(Base, TimestampMixin):
         String(32), nullable=False, server_default=text("'raw'")
     )
     match_score: Mapped[int | None] = mapped_column(SmallInteger)
-    source: Mapped[str | None] = mapped_column(String(32))
+    #: Источник вакансии (docs/04 §10.4): по умолчанию «hh» — площадка
+    #: (multi-source); значения auto/group/manual сохранены как режим ввода.
+    source: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="hh",
+        server_default=text("'hh'"),
+    )
+    #: Внешний идентификатор вакансии у источника (docs/04 §10.4).
+    #: Для hh синхронизируется с hh_vacancy_id (generated column), поэтому
+    #: существующий код хранения не меняется, а составной уникальный индекс
+    #: (user_id, source, external_id) всегда заполнен.
+    external_id: Mapped[str] = mapped_column(
+        String(32),
+        Computed("hh_vacancy_id", persisted=True),
+        nullable=False,
+    )
 
     user: Mapped[User] = relationship(back_populates="vacancies")
     analysis: Mapped[Analysis | None] = relationship(

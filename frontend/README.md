@@ -28,6 +28,13 @@ npm run verify     # проверка для CI (хэши, внешние рес
 frontend/
 ├── index.html                 # Shell приложения: экран авторизации + каркас SPA
 ├── 404.html                   # Кастомная страница ошибки (nginx error_page)
+├── robots.txt                 # Директивы для поисковых роботов
+├── .well-known/
+│   └── security.txt           # Контакты безопасности (Vulnerability Disclosure)
+├── legal/
+│   ├── privacy.html           # Политика обработки персональных данных
+│   ├── terms.html             # Пользовательское соглашение
+│   └── consent.html           # Согласие на обработку персональных данных
 ├── assets/
 │   ├── favicon.svg
 │   └── manifest.json          # SRI-хэши (sha384) статических ресурсов

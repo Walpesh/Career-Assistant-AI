@@ -341,6 +341,8 @@ Proxy Usage Logger пишет **одну строку на задачу**: об�
 ---
 
 ## 4. Связи между таблицами
+
+```text
 users 1 ─────── 1 user_profiles
 │
 │ 1
@@ -352,6 +354,7 @@ users 1 ─────── 1 user_profiles
 └─── 0..1 cover_letters
 users 1 ─────── < tasks
 users 1 ─────── < refresh_tokens
+users 1 ─────── 1 email_otps (только активный код)
 vacancies 1 ─── < tasks (опционально)
 
 # Монетизация и учёт трафика (§3.8–§3.11). Все связи — 1:N от users,
@@ -363,7 +366,9 @@ tasks 1 ─────── 0..1 proxy_usage_logs
 # payment_events связан с пользователем БЕЗ внешнего ключа: при удалении
 # аккаунта запись обезличивается (user_id → NULL), но сохраняется.
 users 1 ─────── < payment_events (без FK, обезличивается)
-text---
+```
+
+---
 
 ## 5. Статусы вакансий (vacancies.status)
 

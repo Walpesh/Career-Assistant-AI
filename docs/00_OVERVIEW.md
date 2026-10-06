@@ -43,7 +43,7 @@
 - Поддержка внешних LLM API (в качестве опции)
 
 ### Очереди и асинхронность
-- ARQ или Celery + Redis
+- Redis + ARQ (реализовано: очереди `career:queue:parsing` и `career:queue:llm`, см. docs/04 §6)
 - Строгая последовательная очередь для всех запросов к LLM
 
 ---
@@ -73,3 +73,6 @@
 - Queue Manager
 - Analysis & Letter
 - Realtime & Notification
+- Privacy (выгрузка и удаление персональных данных)
+- Billing (тарифы, суточные квоты, платёжные вебхуки)
+- Health & Metrics (readiness-проверки, Prometheus-метрики, алерты)

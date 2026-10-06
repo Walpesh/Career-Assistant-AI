@@ -1,4 +1,3 @@
-```markdown
 # 03_API_CONTRACTS.md
 # API-контракты Career-Assistant-AI
 
@@ -347,6 +346,7 @@ Queue Manager (docs/04 §6) и отвечает **202**:
 | event | Описание | Пример payload |
 |-------|----------|----------------|
 | `task.created` | Создана новая задача | `{ "task_id": "...", "task_type": "parse_auto" }` |
+| `task.started` | Воркер взял задачу (получил слот) и начал выполнение | `{ "task_id": "...", "task_type": "parse_auto" }` |
 | `task.progress` | Обновление прогресса | `{ "task_id": "...", "current": 12, "total": 47, "message": "Парсинг вакансии 12/47" }` |
 | `task.completed` | Задача успешно завершена | `{ "task_id": "...", "result": {...} }` |
 | `task.failed` | Задача завершилась ошибкой (или приостановлена: `status = "waiting_captcha"`) | `{ "task_id": "...", "error": "Captcha detected" }` |
@@ -544,4 +544,23 @@ Refresh-cookie удаляется вместе с аккаунтом.
 
 Отмена подписки (`subscription.canceled`) не отбирает оплаченный период:
 доступ сохраняется до конца оплаченного срока, затем тариф возвращается в `free`.
-```
+
+---
+
+## 12. System Endpoints (health и метрики)
+
+Эндпоинты уровня приложения — **вне** префикса `/api/v1`. Auth не требуется.
+
+| Метод | URL | Описание |
+|-------|-----|----------|
+| GET | `/health` | Живость сервиса: `{ "status": "ok", "app", "version" }` |
+| GET | `/health/live` | Liveness для Kubernetes (процесс отвечает) |
+| GET | `/health/ready` | Readiness: Postgres (`SELECT 1`), Redis (`PING`), Ollama → `200 ready` / `503` |
+| GET | `/metrics` | Prometheus text exposition 0.0.4 (docs/01 §7.4) |
+| GET | `/metrics/summary` | JSON-сводка метрик |
+| GET | `/metrics/alerts` | Текущие пороги алертов (docs/01 §7.5) |
+
+`/health/ready` дополнительно отдаёт доступность SMTP (ключ `smtp`:
+`up` | `down` | `skipped` — `skipped`, если `SMTP_HOST` пуст; см. §2).
+Middleware `MetricsMiddleware` и фоновый сборщик метрик включаются только при
+`METRICS_ENABLED=true`; сами `/metrics*`-роуты смонтированы всегда.

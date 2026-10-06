@@ -13,6 +13,8 @@
 ---
 
 ## 2. Высокоуровневая схема Modular-Flow
+
+```text
 [Frontend]
 │
 │  REST + WebSocket
@@ -37,8 +39,14 @@
 │
 ├──► [Analysis & Letter Module]
 │
+├──► [Billing Module]
+│
+├──► [Privacy Module]
+│
 └──► [Realtime & Notification Module] ──► Frontend (WebSocket)
-text---
+```
+
+---
 
 ## 3. Описание модулей и их ответственности
 
@@ -49,11 +57,12 @@ text---
 | **Parsing Orchestrator** | Управление тремя режимами сбора вакансий | Запрос на парсинг (авто/группа/ручной) | Список hh_vacancy_id + сырые данные |
 | **Proxy & Anti-Ban Module** | Ротация прокси, fingerprints, задержки, human-mimicry, обработка 429/капчи | Запрос на HTTP/браузер | Успешный HTML/JSON или ошибка |
 | **Vacancy Storage Module** | Сохранение, дедупликация, обновление статусов | Сырые/очищенные данные вакансии | vacancy_id + текущий статус |
-| **Queue Manager** | Единая очередь задач, контроль параллелизма | Новая задача | Статус задачи + прогресс |
+| **Queue Manager** | Очереди Redis + ARQ (`career:queue:parsing`, `career:queue:llm`), контроль параллелизма | Новая задача | Статус задачи + прогресс |
 | **Analysis & Letter Module** | Анализ, матчинг, генерация писем (4 режима) | vacancy_id + режим | analysis + cover_letter + match_score |
 | **Realtime & Notification Module** | Доставка событий на фронтенд | События от всех модулей | WebSocket-сообщения + Fadeout-popup |
 | **Privacy Module** | Доступ к ПД и их удаление | Запрос пользователя на выгрузку/удаление | JSON-пакет ПД / отчёт об удалении |
 | **Billing Module** | Тарифы, суточные квоты, платёжные вебхуки | Задача перед постановкой в очередь, вебхук шлюза | 429 QUOTA_EXCEEDED / обновление тарифа |
+| **Health & Metrics Module** | Readiness-проверки зависимостей, Prometheus-метрики, пороговые алерты (docs/01 §7) | HTTP-запросы `/health*`, `/metrics*`, фоновый коллектор | JSON-отчёты, метрики, алерты (Sentry) |
 
 ---
 

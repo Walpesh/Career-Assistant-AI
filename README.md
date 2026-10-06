@@ -25,9 +25,11 @@
 
 ```
 .
-├── backend/     # FastAPI-приложение: app/modules/* (8 модулей Modular-Flow)
+├── backend/     # FastAPI-приложение: app/modules/* (12 модулей Modular-Flow)
 ├── frontend/    # SPA: HTML5 + Tailwind CSS + Vanilla JS (ES-модули), см. frontend/README.md
 ├── docs/        # Спецификации проекта
+├── deploy/      # deploy/nginx.conf — прод-раздача статики с CSP и nonce
+├── tests/       # Служебные нагрузочные данные (load)
 └── tools/       # Служебные скрипты (UI smoke test)
 ```
 
@@ -58,7 +60,7 @@ python -m http.server 5500 --directory frontend
 Подробно о сборке, CSP, self-hosted шрифтах и кэшировании — `frontend/README.md`
 и `docs/01_ARCHITECTURE.md` §8.
 
-### Backend (скелет приложения)
+### Backend
 
 ```powershell
 cd backend
@@ -97,16 +99,23 @@ python tools/ui_smoke_test.py
 - [x] Vacancy Storage Module: список с фильтрами, ручной ингест hh.ru, граф статусов, дедупликация
 - [x] Parsing Orchestrator: автопоиск / групповой / ручной режимы, fallback chain, антибан-сессия,
       чёрный список слов с тумблером в автопоиске и групповом парсере (docs/04 §4.9)
-- [x] Queue Manager: единая очередь `tasks`, приоритеты, лимит 2 воркера на пользователя,
-      отдельная строгая LLM-очередь (1 воркер)
+- [x] Queue Manager: две очереди Redis + ARQ — `career:queue:parsing` (лимит 2 слота
+      на пользователя через семафор) и строгая LLM-очередь `career:queue:llm` (1 воркер),
+      приоритеты, дедупликация, восстановление зависших задач (docs/04 §6)
 - [x] Analysis & Letter Module: LLM-анализ и генерация писем (docs/05 §4–§6, §9),
       все 4 режима `analyze` / `letter` / `analyze_and_letter` / `auto`
+- [x] Privacy Module: выгрузка ПД единым JSON-пакетом, сводка до удаления,
+      каскадное удаление аккаунта с отчётом (docs/03 §10)
+- [x] Billing Module: тарифы free/pro/enterprise, суточные квоты до постановки
+      задачи в очередь, HMAC-вебхуки с идемпотентностью (docs/03 §11)
+- [x] Observability: structlog JSON-логи с PII-санитизацией, request_id, Sentry,
+      Prometheus `/metrics*`, `/health*` (docs/01 §7, docs/03 §12)
 
 ### Тесты
 
 ```powershell
 cd backend
-python -m pytest                      # 125 интеграционных тестов (БД career_assistant_test)
+python -m pytest                      # 435 интеграционных тестов (БД career_assistant_test)
 python tools/live_smoke_test.py       # сквозной тест на живой БД + Ollama + hh.ru
 python tools/llm_direct_check.py      # прямой прогон LLM-этапов (анализ + письмо)
 python tools/filter_check.py          # лёгкая проверка фильтров парсинга (без сети и БД)

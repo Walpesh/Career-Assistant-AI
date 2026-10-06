@@ -16,6 +16,11 @@
 Оркестратор работает поверх Proxy & Anti-Ban Module (fetch через AntiBanSession)
 и Vacancy Storage Module (upsert_vacancy). Ошибки защиты hh.ru обрабатываются
 по таблице docs/04 §5 и отдаются вызывающему anti_ban-исключениями.
+
+Мульти-источниковая архитектура (docs/04 §10): режимы работают через
+адаптеры источников из SourceRegistry (по умолчанию — только ``hh`` →
+HHAdapter), hh-специфика (URL, разбор выдачи и карточек) инкапсулирована
+в адаптере, сессия и прогресс остаются у оркестратора.
 """
 
 from __future__ import annotations
@@ -23,16 +28,13 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass, field
-from urllib.parse import urlsplit
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.anti_ban import AntiBanSession, CaptchaDetected, RateLimitExceeded
 from app.modules.anti_ban.session import FetchResponse
 from app.modules.parsing.fetcher import build_page_fetcher
-from app.modules.parsing.listing import parse_listing
-from app.modules.parsing.urls import build_auto_search_url, build_page_url, validate_hh_search_url
-from app.modules.vacancy_storage.parser import extract_vacancy_fields
+from app.modules.parsing.sources import BaseSourceAdapter, SourceRegistry, default_registry
 from app.modules.vacancy_storage.service import delete_vacancy_by_hh_id, upsert_vacancy
 
 __all__ = [
@@ -45,6 +47,7 @@ __all__ = [
     "ParsingOrchestrator",
     "ProgressReporter",
     "NullProgress",
+    "DEFAULT_SOURCES",
 ]
 
 
@@ -115,6 +118,10 @@ def is_blacklisted(fields: dict, blacklist: list[str]) -> list[str]:
 
 logger = logging.getLogger(__name__)
 
+#: Источники по умолчанию для ParsingOrchestrator (docs/04 §10): только hh,
+#: поэтому поведение всех трёх режимов и эндпоинтов не меняется.
+DEFAULT_SOURCES: tuple[str, ...] = ("hh",)
+
 #: Статусы «вакансия удалена на hh.ru» (docs/04 §5 → vacancy.status = 'error').
 _NOT_FOUND_STATUSES = (404, 410)
 
@@ -169,11 +176,32 @@ class NullProgress(ProgressReporter):
 
 
 class ParsingOrchestrator:
-    """Сбор вакансий в трёх режимах через AntiBanSession (docs/04 §2, §4)."""
+    """Сбор вакансий в трёх режимах через AntiBanSession (docs/04 §2, §4).
 
-    def __init__(self, session: AntiBanSession | None = None) -> None:
+    Мульти-источниковый режим (docs/04 §10): оркестратор принимает список
+    ``sources`` (по умолчанию ``["hh"]``) и достаёт адаптеры через
+    SourceRegistry. Режимы работают только через контракт адаптера, вся
+    hh-специфика (URL, разбор выдачи/карточек) инкапсулирована в HHAdapter.
+    """
+
+    def __init__(
+        self,
+        session: AntiBanSession | None = None,
+        sources: list[str] | None = None,
+        registry: SourceRegistry | None = None,
+    ) -> None:
         # Сессия сама обеспечивает прогрев, паузы 4–8 с, ротацию IP и retry (§3, §5).
         self.http = session or AntiBanSession(fetcher=build_page_fetcher())
+        # Источники по умолчанию — только hh: прежнее поведение без изменений.
+        self.sources: list[str] = list(sources or DEFAULT_SOURCES)
+        self.registry = registry or default_registry()
+        # Все адаптеры работают в ОДНОЙ сессии: общие прокси, паузы и
+        # статистика трафика Proxy Usage Logger (docs/04 §3).
+        self.adapters: dict[str, BaseSourceAdapter] = {
+            name: self.registry.create(name, session=self.http) for name in self.sources
+        }
+        # Основной источник режимов — первый в списке (hh, если не задано иное).
+        self.adapter: BaseSourceAdapter = self.adapters[self.sources[0]]
 
     # --- публичные режимы ----------------------------------------------------
     async def run_auto(
@@ -189,22 +217,40 @@ class ParsingOrchestrator:
         progress: ProgressReporter | None = None,
         blacklist: list[str] | None = None,
     ) -> ParsingOutcome:
-        """Автопоиск (docs/04 §4.1)."""
-        base_url = build_auto_search_url(
-            keywords=keywords,
-            employment_forms=employment_forms,
-            work_formats=work_formats,
-            schedules=schedules,
-        )
-        return await self._collect_from_search(
-            db,
-            user_id=user_id,
-            base_url=base_url,
-            max_pages=max_pages,
-            source="auto",
-            progress=progress or NullProgress(),
-            blacklist=blacklist,
-        )
+        """Автопоиск (docs/04 §4.1) по всем источникам из ``sources`` (§10)."""
+        outcome = ParsingOutcome()
+        report = progress or NullProgress()
+        for source_name in self.sources:
+            adapter = self.adapters[source_name]
+            base_url = adapter.build_search_url(
+                keywords=keywords,
+                employment_forms=employment_forms,
+                work_formats=work_formats,
+                schedules=schedules,
+            )
+            part = await self._collect_from_search(
+                db,
+                user_id=user_id,
+                adapter=adapter,
+                base_url=base_url,
+                max_pages=max_pages,
+                source="auto",
+                progress=report,
+                blacklist=blacklist,
+            )
+            self._merge_outcome(outcome, part)
+        return outcome
+
+    @staticmethod
+    def _merge_outcome(target: ParsingOutcome, part: ParsingOutcome) -> None:
+        """Слить итог части в общий (обход нескольких источников, docs/04 §10)."""
+        target.vacancy_ids.extend(part.vacancy_ids)
+        target.created += part.created
+        target.updated += part.updated
+        target.not_found += part.not_found
+        target.failed += part.failed
+        target.blacklisted += part.blacklisted
+        target.pages_visited += part.pages_visited
 
     async def run_group(
         self,
@@ -220,7 +266,8 @@ class ParsingOrchestrator:
         return await self._collect_from_search(
             db,
             user_id=user_id,
-            base_url=validate_hh_search_url(search_url),
+            adapter=self.adapter,
+            base_url=self.adapter.validate_search_url(search_url),
             max_pages=max_pages,
             source="group",
             progress=progress or NullProgress(),
@@ -248,6 +295,7 @@ class ParsingOrchestrator:
             url=vacancy_url,
             source="manual",
             response=response,
+            adapter=self.adapter,
             blacklist=blacklist,
         )
         await report(1, 1, "parsing_vacancy", "Карточка вакансии обработана")
@@ -259,32 +307,36 @@ class ParsingOrchestrator:
         db: AsyncSession,
         *,
         user_id: uuid.UUID,
+        adapter: BaseSourceAdapter,
         base_url: str,
         max_pages: int,
         source: str,
         progress: ProgressReporter,
         blacklist: list[str] | None = None,
     ) -> ParsingOutcome:
-        """docs/04 §4.1 п.2 / §4.2 п.2: собрать id со страниц, затем обойти карточки."""
+        """docs/04 §4.1 п.2 / §4.2 п.2: собрать id со страниц, затем обойти карточки.
+
+        URL-логика и разбор выдачи принадлежат адаптеру источника (§10.2);
+        лимит страниц, прогресс и дедупликация внутри выдачи — оркестратора.
+        """
         outcome = ParsingOutcome()
-        host = urlsplit(base_url).netloc or "hh.ru"
         pages_limit = max(1, max_pages)
 
         # Сначала собираем список карточек (пагинация с лимитом max_pages).
         for page_index in range(pages_limit):
-            url = build_page_url(base_url, page_index)
+            url = adapter.page_url(base_url, page_index)
             await progress(
                 0, 0, "loading_list", f"Загрузка страницы {page_index + 1} из {pages_limit}"
             )
             response = await self.http.fetch(url)
             outcome.pages_visited += 1
 
-            listing = parse_listing(response.text)
-            for hh_id in listing.vacancy_ids:
+            vacancy_ids, has_next_page = adapter.parse_listing(response.text)
+            for hh_id in vacancy_ids:
                 if hh_id not in outcome.vacancy_ids:  # дедупликация внутри выдачи
                     outcome.vacancy_ids.append(hh_id)
 
-            if not listing.vacancy_ids or not listing.has_next_page:
+            if not vacancy_ids or not has_next_page:
                 break  # выдача или пагинация закончились
 
         total = len(outcome.vacancy_ids)
@@ -295,7 +347,7 @@ class ParsingOrchestrator:
             await progress(
                 index - 1, total, "parsing_vacancy", f"Парсинг вакансии {index} из {total}"
             )
-            vacancy_url = f"https://{host}/vacancy/{hh_id}"
+            vacancy_url = adapter.build_vacancy_url(base_url, hh_id)
             try:
                 response = await self.http.fetch(vacancy_url)
                 await self._ingest(
@@ -305,6 +357,7 @@ class ParsingOrchestrator:
                     url=vacancy_url,
                     source=source,
                     response=response,
+                    adapter=adapter,
                     outcome=outcome,
                     blacklist=blacklist,
                 )
@@ -326,6 +379,7 @@ class ParsingOrchestrator:
         url: str,
         source: str,
         response: FetchResponse,
+        adapter: BaseSourceAdapter,
         outcome: ParsingOutcome | None = None,
         blacklist: list[str] | None = None,
     ) -> ParsingOutcome:
@@ -351,7 +405,7 @@ class ParsingOrchestrator:
             result.not_found += 1
             return result
 
-        fields = extract_vacancy_fields(response.text)
+        fields = adapter.extract_fields(response.text)
         if not fields.get("title"):
             # Капча или изменившаяся вёрстка (docs/04 §5) — карточка не разобрана.
             result.failed += 1
