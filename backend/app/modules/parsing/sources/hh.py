@@ -142,6 +142,18 @@ class HHAdapter(BaseSourceAdapter):
 
     # --- хуки ParsingOrchestrator (docs/04 §10.2) ----------------------------
 
+    @staticmethod
+    def _resolve_city_area(city: str | None) -> int | None:
+        """Привести название города к id территории hh.ru (area).
+
+        Сопоставление берётся из https://github.com/hhru/api (любой ID
+        региона). Если город не в карте или передан пустой ``city`` —
+        возвращает ``None`` (без area-фильтра).
+        """
+        if not city:
+            return None
+        return _CITY_AREA_MAP.get(city.strip())
+
     def build_search_url(
         self,
         *,
@@ -150,14 +162,20 @@ class HHAdapter(BaseSourceAdapter):
         work_formats: list[str] | None = None,
         schedules: list[str] | None = None,
         page: int = 0,
+        city: str | None = None,
     ) -> str:
-        """Ссылка автопоиска hh.ru из ключевых слов и фильтров (docs/04 §4.1)."""
+        """Ссылка автопоиска hh.ru из ключевых слов и фильтров (docs/04 §4.1).
+
+        Если ``city`` задан и найден в карте — к URL добавляется параметр
+        ``area=<id региона>``, иначе параметр не добавляется (мирской поиск).
+        """
         return build_auto_search_url(
             keywords=keywords,
             employment_forms=employment_forms,
             work_formats=work_formats,
             schedules=schedules,
             page=page,
+            area=self._resolve_city_area(city),
         )
 
     def validate_search_url(self, search_url: str) -> str:

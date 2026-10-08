@@ -64,12 +64,21 @@ def build_auto_search_url(
     work_formats: list[str] | None = None,
     schedules: list[str] | None = None,
     page: int = 0,
+    area: str | None = None,
 ) -> str:
     """Ссылка на результаты поиска по ключевым словам и фильтрам (docs/04 §4.1).
 
     Ключевые слова объединяются в один текстовый запрос (hh.ru ищет по «text»),
     фильтры пробрасываются штатными параметрами поиска. Пустые фильтры в URL не
     попадают, чтобы ссылка оставалась читаемой и повторяемой.
+
+    Args:
+        keywords: Ключевые слова запроса.
+        employment_forms: Формы занятости.
+        work_formats: Форматы работы.
+        schedules: Графики работы.
+        page: Номер страницы (нумерация с нуля).
+        area: ID территории hh.ru (число) для локализации поиска.
     """
     text = " ".join(word.strip() for word in (keywords or []) if word and word.strip())
     params: list[tuple[str, str]] = [("text", text)] if text else []
@@ -79,6 +88,8 @@ def build_auto_search_url(
         params.append(("work_format", ",".join(work_formats)))
     if schedules:
         params.append(("schedule", ",".join(schedules)))
+    if area:
+        params.append(("area", str(area)))
     params.append((_PAGE_PARAM, str(max(0, page))))
     return f"{HH_SEARCH_BASE}?{urlencode(params)}"
 

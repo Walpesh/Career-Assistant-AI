@@ -46,6 +46,10 @@ class ParseAutoRequest(BaseModel):
         default=70, ge=0, le=100, description="Порог матчинга для автоматической генерации письма"
     )
     max_pages: int = Field(default=5, ge=1, le=20, description="Максимальное количество страниц результатов")
+    city: Optional[str] = Field(
+        default=None,
+        description="Целевое название города для фильтрации вакансий (если пусто — поиск по всей России без городов)",
+    )
     blacklist_enabled: bool = Field(
         default=False,
         description="Включён ли чёрный список слов (docs/04 §4.9). Выключен — фильтр не применяется",

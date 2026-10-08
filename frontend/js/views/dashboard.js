@@ -201,6 +201,7 @@ async function submitAuto() {
     return;
   }
 
+  const cityInput = document.getElementById('auto-city');
   const payload = {
     keywords,
     match_threshold: clamp(getMatchThreshold(), 0, 100),
@@ -213,6 +214,8 @@ async function submitAuto() {
   if (employment.length) payload.employment_forms = employment;
   if (formats.length) payload.work_formats = formats;
   if (schedules.length) payload.schedules = schedules;
+  const cityValue = cityInput ? cityInput.value.trim() : '';
+  if (cityValue) payload.city = cityValue;
 
   await createTask(() => api.parseAuto(payload), els.autoButton, 'Автопоиск запущен');
 }

@@ -1,10 +1,11 @@
 """Мульти-источниковая архитектура парсинга (docs/04_PARSING_RULES.md §10).
 
 Пакет содержит контракт адаптера источника, реестр, адаптер hh.ru, адаптер
-RemoteOK, адаптер Remotive, адаптер We Work Remotely и адаптер Greenhouse.
-Импорт пакета не тянет heavy-зависимости: ``HHAdapter``, ``RemoteOKAdapter``,
-``RemotiveAdapter``, ``WeWorkRemotelyAdapter`` и ``GreenhouseAdapter``
-подключаются лениво через ``default_registry()``.
+RemoteOK, адаптер Remotive, адаптер We Work Remotely, адаптер Greenhouse и
+адаптер Lever. Импорт пакета не тянет heavy-зависимости: ``HHAdapter``,
+``RemoteOKAdapter``, ``RemotiveAdapter``, ``WeWorkRemotelyAdapter``,
+``GreenhouseAdapter`` и ``LeverAdapter`` подключаются лениво через
+``default_registry()``.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from app.modules.parsing.sources.registry import SourceRegistry, UnknownSourceEr
 
 if TYPE_CHECKING:
     from app.modules.parsing.sources.greenhouse import GreenhouseAdapter
+    from app.modules.parsing.sources.lever import LeverAdapter
     from app.modules.parsing.sources.remoteok import RemoteOKAdapter
     from app.modules.parsing.sources.remotive import RemotiveAdapter
     from app.modules.parsing.sources.weworkremotely import WeWorkRemotelyAdapter
@@ -27,6 +29,7 @@ __all__ = [
     "UnknownSourceError",
     "default_registry",
     "GreenhouseAdapter",
+    "LeverAdapter",
     "RemoteOKAdapter",
     "RemotiveAdapter",
     "WeWorkRemotelyAdapter",
@@ -34,17 +37,19 @@ __all__ = [
 
 
 def default_registry() -> SourceRegistry:
-    """Реестр со встроенными источниками: hh, remoteok, remotive, weworkremotely, greenhouse.
+    """Реестр со встроенными источниками: hh, remoteok, remotive, weworkremotely, greenhouse, lever.
 
     Базовый ``registry.default_registry()`` даёт встроенный ``HHAdapter``;
     сюда дополнительно регистрируются ``RemoteOKAdapter``,
-    ``RemotiveAdapter``, ``WeWorkRemotelyAdapter`` и ``GreenhouseAdapter``.
+    ``RemotiveAdapter``, ``WeWorkRemotelyAdapter``, ``GreenhouseAdapter``
+    и ``LeverAdapter``.
     Оркестратор получает реестр именно через пакет
     ``app.modules.parsing.sources``, поэтому подключение источника не требует
     правок оркестратора (docs/04 §10.3).
     """
     registry = _registry_module.default_registry()
     from app.modules.parsing.sources.greenhouse import GreenhouseAdapter
+    from app.modules.parsing.sources.lever import LeverAdapter
     from app.modules.parsing.sources.remoteok import RemoteOKAdapter
     from app.modules.parsing.sources.remotive import RemotiveAdapter
     from app.modules.parsing.sources.weworkremotely import WeWorkRemotelyAdapter
@@ -53,6 +58,7 @@ def default_registry() -> SourceRegistry:
     registry.register(RemotiveAdapter)
     registry.register(WeWorkRemotelyAdapter)
     registry.register(GreenhouseAdapter)
+    registry.register(LeverAdapter)
     return registry
 
 
@@ -62,6 +68,10 @@ def __getattr__(name: str) -> Any:
         from app.modules.parsing.sources.greenhouse import GreenhouseAdapter
 
         return GreenhouseAdapter
+    if name == "LeverAdapter":
+        from app.modules.parsing.sources.lever import LeverAdapter
+
+        return LeverAdapter
     if name == "RemoteOKAdapter":
         from app.modules.parsing.sources.remoteok import RemoteOKAdapter
 
