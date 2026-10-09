@@ -10,7 +10,8 @@
   готовую ``AntiBanSession`` (общую с ParsingOrchestrator);
 - разбор выдачи (встроенный ``HH-Lux-InitialState`` + HTML-fallback) —
   ``listing.py``; URL-логика автопоиска/пагинации — ``urls.py``;
-- разбор карточки — ``vacancy_storage.parser.extract_vacancy_fields``.
+- разбор карточки — ``vacancy_storage.parser.extract_vacancy_fields``;
+- город автопоиска → id территории hh.ru (``area``) — ``hh_areas.py``.
 
 Все hh-специфичные функции модулей ``listing``/``urls`` инкапсулированы
 здесь: оркестратор обращается к ним только через хуки адаптера.
@@ -18,12 +19,14 @@
 
 from __future__ import annotations
 
+import logging
 from urllib.parse import urlsplit
 
 from app.modules.anti_ban import AntiBanSession
 from app.modules.parsing.fetcher import build_page_fetcher
 from app.modules.parsing.listing import parse_listing
 from app.modules.parsing.sources.base import BaseSourceAdapter
+from app.modules.parsing.sources.hh_areas import resolve_city_area
 from app.modules.parsing.urls import (
     build_auto_search_url,
     build_page_url,
@@ -33,6 +36,8 @@ from app.modules.vacancy_storage.parser import extract_vacancy_fields
 from app.modules.vacancy_storage.service import extract_hh_vacancy_id
 
 __all__ = ["HHAdapter"]
+
+logger = logging.getLogger(__name__)
 
 #: Статусы «вакансия удалена на hh.ru» (docs/04 §5 → get_vacancy вернёт None).
 _NOT_FOUND_STATUSES = (404, 410)
@@ -58,7 +63,8 @@ class HHAdapter(BaseSourceAdapter):
         Args:
             filters: ``search_url`` (готовая ссылка выдачи, §4.2) либо
                 ``keywords``/``employment_forms``/``work_formats``/``schedules``
-                (§4.1), а также ``max_pages`` (по умолчанию 5).
+                (§4.1), а также ``city`` (город фильтрации, §4.1 п.1)
+                и ``max_pages`` (по умолчанию 5).
 
         Returns:
             list[dict]: сырые карточки ``{source, external_id, url}``
@@ -74,6 +80,7 @@ class HHAdapter(BaseSourceAdapter):
                 employment_forms=filters.get("employment_forms"),
                 work_formats=filters.get("work_formats"),
                 schedules=filters.get("schedules"),
+                city=filters.get("city"),
             )
 
         results: list[dict] = []
@@ -146,13 +153,26 @@ class HHAdapter(BaseSourceAdapter):
     def _resolve_city_area(city: str | None) -> int | None:
         """Привести название города к id территории hh.ru (area).
 
-        Сопоставление берётся из https://github.com/hhru/api (любой ID
-        региона). Если город не в карте или передан пустой ``city`` —
-        возвращает ``None`` (без area-фильтра).
+        Сопоставление берётся из карты ``hh_areas._CITY_AREA_MAP``
+        (https://github.com/hhru/api, любой ID региона). Название
+        нормализуется: обрезка пробелов, нижний регистр, «ё» → «е»,
+        унификация дефисов.
+
+        Если город не найден в карте (пустой, ``None`` или незнакомое
+        название) — автопоиск НЕ падает: в лог уходит предупреждение и
+        возвращается ``None``, то есть поиск идёт без area-фильтра. Пустое
+        значение (в том числе из одних пробелов) — не ошибка и молча даёт
+        ``None``: «город не указан» и «город с опечаткой» — разные случаи.
         """
-        if not city:
+        if not city or not city.strip():
             return None
-        return _CITY_AREA_MAP.get(city.strip())
+        area = resolve_city_area(city)
+        if area is None:
+            logger.warning(
+                "City '%s' not recognized in area map; proceeding without area filter",
+                city,
+            )
+        return area
 
     def build_search_url(
         self,
@@ -166,8 +186,9 @@ class HHAdapter(BaseSourceAdapter):
     ) -> str:
         """Ссылка автопоиска hh.ru из ключевых слов и фильтров (docs/04 §4.1).
 
-        Если ``city`` задан и найден в карте — к URL добавляется параметр
-        ``area=<id региона>``, иначе параметр не добавляется (мирской поиск).
+        Если ``city`` задан и найден в карте территорий — к URL добавляется
+        параметр ``area=<id региона>``, иначе параметр не добавляется
+        (поиск без географического ограничения).
         """
         return build_auto_search_url(
             keywords=keywords,

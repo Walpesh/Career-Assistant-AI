@@ -213,11 +213,17 @@ class ParsingOrchestrator:
         employment_forms: list[str] | None = None,
         work_formats: list[str] | None = None,
         schedules: list[str] | None = None,
+        city: str | None = None,
         max_pages: int = 5,
         progress: ProgressReporter | None = None,
         blacklist: list[str] | None = None,
     ) -> ParsingOutcome:
-        """Автопоиск (docs/04 §4.1) по всем источникам из ``sources`` (§10)."""
+        """Автопоиск (docs/04 §4.1) по всем источникам из ``sources`` (§10).
+
+        ``city`` локализует выдачу через ``area`` источника (docs/04 §4.1 п.1);
+        неизвестный или пустой город источник игнорирует и ищет без
+        географического фильтра (см. ``HHAdapter._resolve_city_area``).
+        """
         outcome = ParsingOutcome()
         report = progress or NullProgress()
         for source_name in self.sources:
@@ -227,6 +233,7 @@ class ParsingOrchestrator:
                 employment_forms=employment_forms,
                 work_formats=work_formats,
                 schedules=schedules,
+                city=city,
             )
             part = await self._collect_from_search(
                 db,

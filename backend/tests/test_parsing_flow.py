@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import uuid
 from urllib.parse import parse_qsl, urlsplit
 
@@ -30,6 +31,7 @@ from app.modules.parsing import service as service_module
 from app.modules.parsing.fetcher import HhPageFetcher, _is_usable
 from app.modules.parsing.listing import extract_listing_ids, parse_listing
 from app.modules.parsing.service import ParsingOrchestrator
+from app.modules.parsing.sources.hh import HHAdapter
 from app.modules.parsing.urls import (
     build_auto_search_url,
     build_page_url,
@@ -309,6 +311,123 @@ def test_validate_hh_search_url_accepts_hh_subdomains():
     assert validate_hh_search_url("https://novokuznetsk.hh.ru/vacancies/razrabotchik")
 
 
+# --- docs/04 §4.1 п.1: город автопоиска → area hh.ru -----------------------
+
+
+def test_resolve_city_area_known_cities():
+    """Известные города дают id территории hh.ru (Москва = 1, СПб = 2)."""
+    adapter = HHAdapter()
+    assert adapter._resolve_city_area("Москва") == 1
+    assert adapter._resolve_city_area("Санкт-Петербург") == 2
+
+
+@pytest.mark.parametrize(
+    "city,expected",
+    [
+        ("Москва", 1),
+        ("  москва  ", 1),  # регистр и пробелы не важны
+        ("МОСКВА", 1),
+        ("санкт-петербург", 2),  # нормализованный вариант из спеки
+        ("Санкт-Петербург", 2),
+        ("Санкт - Петербург", 2),  # пробелы вокруг дефиса
+        ("Санкт – Петербург", 2),  # длинное тире вместо дефиса
+        ("санкт петербург", 2),  # дефис вообще не введён
+        ("Нижний Новгород", 66),
+        ("Ростов-на-Дону", 76),
+        ("Орел", 69),
+        ("Орёл", 69),  # «ё» → «е»
+        ("Екатеринбург", 3),
+    ],
+)
+def test_resolve_city_area_normalizes_input(city, expected):
+    """Нормализация: пробелы, регистр, «ё»/«е» и вид дефиса не ломают поиск."""
+    assert HHAdapter()._resolve_city_area(city) == expected
+
+
+@pytest.mark.parametrize("city", ["Атлантида", "атлантида", "Остин", "Narnia", "12345"])
+def test_resolve_city_area_unknown_city_returns_none(city, caplog):
+    """Неизвестный город → None + понятное предупреждение в лог (без падения)."""
+    adapter = HHAdapter()
+    with caplog.at_level(logging.WARNING, logger="app.modules.parsing.sources.hh"):
+        assert adapter._resolve_city_area(city) is None
+    assert "not recognized in area map" in caplog.text
+    assert city in caplog.text
+    assert "without area filter" in caplog.text
+
+
+@pytest.mark.parametrize("city", [None, "", "   "])
+def test_resolve_city_area_empty_city_returns_none_silently(city, caplog):
+    """Пустой город — не ошибка: поиск идёт по всей России без предупреждений."""
+    adapter = HHAdapter()
+    with caplog.at_level(logging.WARNING, logger="app.modules.parsing.sources.hh"):
+        assert adapter._resolve_city_area(city) is None
+    assert "not recognized in area map" not in caplog.text
+
+
+def test_city_area_map_covers_major_cities():
+    """Карта территорий покрывает города-миллионники и их регионы."""
+    from app.modules.parsing.sources.hh_areas import _CITY_AREA_MAP
+
+    for city, area_id in {
+        "москва": 1,
+        "санкт-петербург": 2,
+        "екатеринбург": 3,
+        "новосибирск": 4,
+        "казань": 88,
+        "нижний новгород": 66,
+        "челябинск": 104,
+        "самара": 78,
+        "уфа": 99,
+        "ростов-на-дону": 76,
+    }.items():
+        assert _CITY_AREA_MAP[city] == area_id
+
+
+def test_build_search_url_appends_area_for_known_city():
+    """docs/04 §4.1 п.1: известный город → area=<id> в URL поиска."""
+    url = HHAdapter().build_search_url(keywords=["python"], city="Москва")
+    query = dict(parse_qsl(urlsplit(url).query))
+    assert query["text"] == "python"
+    assert query["area"] == "1"
+    assert query["page"] == "0"
+
+
+@pytest.mark.parametrize("city", ["Атлантида", "", None])
+def test_build_search_url_omits_area_without_recognized_city(city):
+    """Неизвестный/пустой город → area НЕ добавляется (поиск по всей России)."""
+    url = HHAdapter().build_search_url(keywords=["python"], city=city)
+    assert "area" not in dict(parse_qsl(urlsplit(url).query))
+    assert url.startswith("https://hh.ru/search/vacancy?")
+
+
+def test_build_search_url_keeps_other_filters_with_city():
+    """Город комбинируется с остальными фильтрами автопоиска (docs/04 §4.1 п.1)."""
+    url = HHAdapter().build_search_url(
+        keywords=["python"],
+        employment_forms=["full"],
+        work_formats=["remote"],
+        schedules=["fullDay"],
+        city="Казань",
+    )
+    query = dict(parse_qsl(urlsplit(url).query))
+    assert query["area"] == "88"
+    assert query["employment"] == "full"
+    assert query["work_format"] == "remote"
+    assert query["schedule"] == "fullDay"
+
+    # docs/04 §4.2 п.2: пагинация сохраняет и area, и фильтры.
+    page_query = dict(parse_qsl(urlsplit(build_page_url(url, 2)).query))
+    assert page_query["area"] == "88"
+    assert page_query["employment"] == "full"
+    assert page_query["page"] == "2"
+
+
+def test_build_search_url_does_not_raise_name_error_for_city():
+    """Регрессия: город не должен приводить к NameError в адаптере."""
+    adapter = HHAdapter()
+    assert "area=1" in adapter.build_search_url(keywords=["python"], city="Москва")
+
+
 # --- docs/04 §2 / §4.1: разбор выдачи --------------------------------------
 
 def test_parse_listing_from_lux_state_and_pagination():
@@ -501,6 +620,84 @@ async def test_auto_mode_respects_max_pages(engine, user_factory):
 
     assert outcome.pages_visited == 2
     assert outcome.vacancy_ids == ["200", "201"]
+
+
+async def test_auto_mode_passes_city_into_search_requests(engine, user_factory):
+    """docs/04 §4.1 п.1: город из run_auto доходит до URL выдачи (area=1)."""
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    user_id = await user_factory()
+    session_mock = FakeSession()
+    orchestrator = ParsingOrchestrator(session=session_mock)
+
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        await orchestrator.run_auto(
+            session, user_id=user_id, keywords=["python"], city="Москва", max_pages=1
+        )
+
+    assert session_mock.requested, "ожидался хотя бы один запрос выдачи"
+    for requested_url in session_mock.requested:
+        query = dict(parse_qsl(urlsplit(requested_url).query))
+        assert query["area"] == "1"
+        assert query["text"] == "python"
+
+
+@pytest.mark.parametrize(
+    "city,expected_area",
+    [("Санкт-Петербург", "2"), ("Казань", "88"), ("Атлантида", None), (None, None)],
+)
+async def test_auto_mode_city_area_reaches_listing_requests(
+    engine, user_factory, city, expected_area
+):
+    """area из карты территорий попадает в запросы выдачи; чужой город — нет."""
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    user_id = await user_factory()
+    session_mock = FakeSession()
+    orchestrator = ParsingOrchestrator(session=session_mock)
+
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        await orchestrator.run_auto(
+            session, user_id=user_id, keywords=["python"], city=city, max_pages=1
+        )
+
+    assert session_mock.requested
+    for requested_url in session_mock.requested:
+        query = dict(parse_qsl(urlsplit(requested_url).query))
+        if expected_area is None:
+            assert "area" not in query  # docs/04 §4.1: поиск без географического фильтра
+        else:
+            assert query["area"] == expected_area
+
+
+async def test_auto_mode_unknown_city_logs_warning_and_still_searches(engine, user_factory, caplog):
+    """Неизвестный город: предупреждение в лог, поиск выполняется без area."""
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    user_id = await user_factory()
+    base = "https://hh.ru/search/vacancy?text=python"
+    session_mock = FakeSession({
+        build_page_url(base, 0): FetchResponse(
+            status_code=200, text=_listing_html(["555"]), url=""
+        ),
+        "https://hh.ru/vacancy/555": FetchResponse(status_code=200, text=VACANCY_CARD, url=""),
+    })
+    orchestrator = ParsingOrchestrator(session=session_mock)
+
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        with caplog.at_level(logging.WARNING, logger="app.modules.parsing.sources.hh"):
+            outcome = await orchestrator.run_auto(
+                session,
+                user_id=user_id,
+                keywords=["python"],
+                city="Атлантида",
+                max_pages=1,
+            )
+
+    assert "City 'Атлантида' not recognized in area map" in caplog.text
+    assert "area" not in dict(parse_qsl(urlsplit(session_mock.requested[0]).query))
+    assert outcome.vacancy_ids == ["555"]  # поиск всё равно состоялся
+    assert outcome.created == 1
 
 
 async def test_group_mode_walks_pagination_and_keeps_filters(engine, user_factory):
@@ -1261,6 +1458,66 @@ async def test_worker_passes_blacklist_only_when_enabled(
         service_module.ParsingOrchestrator.run_auto = original
 
 
+async def test_worker_passes_city_to_orchestrator(engine, user_factory, queue_runner):
+    """city из payload задачи доходит до оркестратора (docs/04 §4.1 п.1)."""
+    original = service_module.ParsingOrchestrator.run_auto
+    captured: dict = {}
+
+    async def fake_run_auto(self, db, **kwargs):
+        captured.clear()
+        captured.update(kwargs)
+        return service_module.ParsingOutcome(vacancy_ids=["1"], created=1)
+
+    service_module.ParsingOrchestrator.run_auto = fake_run_auto
+    try:
+        task_id = await _make_task(
+            engine,
+            await user_factory(),
+            "parse_auto",
+            {"keywords": ["python"], "max_pages": 1, "city": "Москва"},
+        )
+        await queue_runner.run_pending(engine, [task_id])
+        assert captured["city"] == "Москва"
+
+        # Город не передан в payload → orchestrator получает None (без area).
+        empty_id = await _make_task(
+            engine,
+            await user_factory(),
+            "parse_auto",
+            {"keywords": ["python"], "max_pages": 1},
+        )
+        await queue_runner.run_pending(engine, [empty_id])
+        assert captured["city"] is None
+    finally:
+        service_module.ParsingOrchestrator.run_auto = original
+
+
+async def test_worker_dispatch_city_reaches_search_url(engine, user_factory, queue_runner):
+    """Сквозная проверка: payload {"city": "Москва"} → area=1 в URL выдачи."""
+    user_id = await user_factory()
+    session_mock = FakeSession()
+    original_init = service_module.ParsingOrchestrator.__init__
+
+    def patched_init(self, session=None, sources=None, registry=None):
+        original_init(self, session=session_mock, sources=sources, registry=registry)
+
+    service_module.ParsingOrchestrator.__init__ = patched_init
+    try:
+        task_id = await _make_task(
+            engine,
+            user_id,
+            "parse_auto",
+            {"keywords": ["python"], "max_pages": 1, "city": "Москва"},
+        )
+        await queue_runner.run_pending(engine, [task_id])
+    finally:
+        service_module.ParsingOrchestrator.__init__ = original_init
+
+    assert session_mock.requested, "воркер должен был сделать запрос выдачи"
+    for requested_url in session_mock.requested:
+        assert "area=1" in requested_url
+
+
 async def test_parse_endpoints_store_blacklist_payload(client, engine):
     """docs/03 §5 + docs/04 §4.9: чёрный список попадает в payload задачи."""
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -1299,3 +1556,39 @@ async def test_parse_endpoints_store_blacklist_payload(client, engine):
         # Выключенный тумблер: слова в payload не сохраняются вовсе.
         assert task.payload["blacklist_enabled"] is False
         assert task.payload["blacklist_words"] == []
+
+
+async def test_parse_auto_endpoint_stores_city_in_payload(client, engine):
+    """docs/03 §5 + docs/04 §4.1: city запроса попадает в payload задачи."""
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    headers = await _register(client)
+
+    response = await client.post(
+        "/api/v1/parsing/auto",
+        json={"keywords": ["python"], "city": "Москва"},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        task = await session.get(Task, uuid.UUID(response.json()["task_id"]))
+        assert task.payload["city"] == "Москва"
+
+
+async def test_parse_auto_endpoint_omits_empty_city_from_payload(client, engine):
+    """Пустой город не попадает в payload — воркер получит None."""
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    headers = await _register(client)
+
+    response = await client.post(
+        "/api/v1/parsing/auto",
+        json={"keywords": ["python"]},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        task = await session.get(Task, uuid.UUID(response.json()["task_id"]))
+        assert task.payload.get("city") is None

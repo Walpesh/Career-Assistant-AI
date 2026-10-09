@@ -593,6 +593,7 @@ async def _dispatch_parsing(
             employment_forms=list(payload.get("employment_forms") or []),
             work_formats=list(payload.get("work_formats") or []),
             schedules=list(payload.get("schedules") or []),
+            city=payload.get("city"),
             max_pages=int(payload.get("max_pages") or 5),
             progress=reporter,
             blacklist=blacklist,
