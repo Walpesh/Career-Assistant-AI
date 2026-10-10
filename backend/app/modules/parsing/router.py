@@ -15,7 +15,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError
@@ -108,7 +108,15 @@ async def _create_task(
 @router.post(
     "/auto",
     response_model=ParseTaskResponse,
+    # Постановка задачи в очередь — это 200 OK (задача создана и в Redis),
+    # а не 202: единый контракт dispatch-эндпоинтов (docs/03 §5, §9).
+    status_code=status.HTTP_200_OK,
     summary="Запуск автопоиска по ключевым словам (docs/03 §5)",
+    responses={
+        200: {
+            "description": "Задача создана и поставлена в очередь: { task_id, status }"
+        }
+    },
 )
 async def parse_auto(
     payload: ParseAutoRequest,
@@ -149,7 +157,14 @@ async def parse_auto(
 @router.post(
     "/group",
     response_model=ParseTaskResponse,
+    # 200 OK (а не 202): единый контракт dispatch-эндпоинтов (docs/03 §5, §9).
+    status_code=status.HTTP_200_OK,
     summary="Запуск группового парсинга по готовой ссылке (docs/03 §5)",
+    responses={
+        200: {
+            "description": "Задача создана и поставлена в очередь: { task_id, status }"
+        }
+    },
 )
 async def parse_group(
     payload: ParseGroupRequest,
@@ -172,7 +187,14 @@ async def parse_group(
 @router.post(
     "/manual",
     response_model=ParseTaskResponse,
+    # 200 OK (а не 202): единый контракт dispatch-эндпоинтов (docs/03 §5, §9).
+    status_code=status.HTTP_200_OK,
     summary="Ручное добавление вакансии по ссылке (docs/03 §5)",
+    responses={
+        200: {
+            "description": "Задача создана и поставлена в очередь: { task_id, status }"
+        }
+    },
 )
 async def parse_manual(
     payload: ParseManualRequest,

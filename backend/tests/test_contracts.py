@@ -137,17 +137,30 @@ _DOC_ROW = re.compile(
 #: Разделы документации со сводным кодом ответов (docs/03 §9).
 STATUS_SECTION = "## 9."
 
+#: Служебные маршруты уровня приложения (docs/03 §12): они смонтированы вне
+#: префикса ``/api/v1`` и не входят в контракт REST API. Таблица §12 оформлена
+#: в том же формате ``| METHOD | path |``, что и контрактные таблицы §2–§11,
+#: поэтому ``_DOC_ROW`` захватывала бы их как «документированные эндпоинты» и
+#: ломала инвариант «/health, /metrics не смешаны с /api/v1» (см. тест
+#: ``test_health_and_metrics_are_separate_from_api_contract``). Явно исключаем
+#: их здесь, чтобы контрактная сверка docs↔OpenAPI не ловила служебный шум.
+_SERVICE_PATH_PREFIXES = ("/health", "/metrics")
+
 
 def _documented_endpoints() -> set[tuple[str, str]]:
     """Эндпоинты из markdown-таблиц docs/03 как (путь, METHOD).
 
     Путь нормализуется так же, как в OpenAPI, чтобы ``/tasks/{task_id}``
-    совпадал с ``/tasks/${id}`` из фронтенда.
+    совпадал с ``/tasks/${id}`` из фронтенда. Служебные маршруты уровня
+    приложения (``/health``, ``/metrics``) исключаются — они не часть
+    контракта ``/api/v1`` (docs/03 §12).
     """
     text = CONTRACTS_MD.read_text(encoding="utf-8")
     rows: set[tuple[str, str]] = set()
     for method, path, _auth in _DOC_ROW.findall(text):
         if not path.startswith("/"):
+            continue
+        if path.startswith(_SERVICE_PATH_PREFIXES):
             continue
         # WebSocket-эндпоинт не попадает в OpenAPI.
         rows.add((_openapi_normalized(path), method))
@@ -155,11 +168,17 @@ def _documented_endpoints() -> set[tuple[str, str]]:
 
 
 def _documented_auth_requirements() -> dict[tuple[str, str], bool]:
-    """Карта (путь, METHOD) → требуется ли авторизация (docs/03 «Auth»)."""
+    """Карта (путь, METHOD) → требуется ли авторизация (docs/03 «Auth»).
+
+    Служебные маршруты (``/health``, ``/metrics``) исключаются по той же
+    причине, что и в ``_documented_endpoints`` — они вне контракта /api/v1.
+    """
     text = CONTRACTS_MD.read_text(encoding="utf-8")
     result: dict[tuple[str, str], bool] = {}
     for method, path, auth in _DOC_ROW.findall(text):
         if not path.startswith("/"):
+            continue
+        if path.startswith(_SERVICE_PATH_PREFIXES):
             continue
         result[(_openapi_normalized(path), method)] = auth.strip().strip("*") == "Да"
     return result

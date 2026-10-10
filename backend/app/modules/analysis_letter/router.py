@@ -19,7 +19,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Depends, Path, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -108,7 +108,15 @@ class RunAnalysisResponse(BaseModel):
 @analysis_router.post(
     "/run",
     response_model=RunAnalysisResponse,
+    # Постановка задачи в очередь — это 200 OK (задача создана), а не 202:
+    # единый контракт dispatch-эндпоинтов (docs/03 §6, §9).
+    status_code=status.HTTP_200_OK,
     summary="Запуск обработки вакансий (docs/03 §6)",
+    responses={
+        200: {
+            "description": "Задача создана и поставлена в очередь: { task_id, status }"
+        }
+    },
 )
 async def run_analysis(
     payload: RunAnalysisRequest,

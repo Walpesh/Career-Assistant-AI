@@ -52,6 +52,24 @@ API = "/api/v1"
 SECRET = "webhook-test-secret"
 
 
+@pytest.fixture(autouse=True)
+def _force_billing(monkeypatch):
+    """Сделать набор герметичным относительно ``BILLING_ENABLED``.
+
+    ``consume_quota()`` (docs/03 §11) намеренно отключается флагом окружения
+    ``BILLING_ENABLED``: при ``false`` он возвращает ``None`` и не проверяет
+    лимит. В dev-окружении (``backend/.env``) флаг выключен, поэтому тесты,
+    ожидающие ``429 QUOTA_EXCEEDED``, падали бы с ложным негативом («логика
+    прода работает, но окружение глушит квоты»). Принудительно включаем контроль
+    на время прогона, чтобы поведение тестов не зависело от локального ``.env``.
+
+    Тест ``test_quota_disabled_skips_enforcement`` передаёт ``enforce=False``
+    явно — этот аргумент имеет приоритет над флагом, поэтому проверка
+    выключенного состояния остаётся достоверной.
+    """
+    monkeypatch.setattr(settings, "billing_enabled", True, raising=False)
+
+
 def _factory(engine):
     return async_sessionmaker(
         bind=engine, class_=AsyncSession, expire_on_commit=False, autoflush=False
