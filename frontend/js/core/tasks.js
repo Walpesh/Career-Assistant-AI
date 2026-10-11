@@ -154,13 +154,15 @@ export async function initTaskTracking() {
       upsert({
         id: payload.task_id,
         status: 'waiting_captcha',
-        error_message: payload.error || 'Требуется прохождение капчи hh.ru',
+        error_message: payload.error || 'Требуется прохождение капчи',
         finished_at: null
       });
       // Уведомляем один раз за эпизод: пауза требует действий пользователя.
+      // Источник капчи приходит из error (реальный домен площадки, docs/04 §10),
+      // поэтому заголовок не твердит «hh.ru» — бэкенд сам называет площадку.
       if (!alreadyWaiting) {
         popup.warning(
-          'Требуется капча hh.ru',
+          'Требуется капча',
           payload.error ||
             'Пройдите капчу и нажмите «Капча пройдена — продолжить» в карточке задачи.'
         );

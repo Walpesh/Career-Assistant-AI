@@ -34,6 +34,7 @@ import time
 import uuid
 from contextlib import suppress
 from datetime import UTC, datetime
+from urllib.parse import urlsplit
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -416,6 +417,22 @@ async def run_parsing_task(ctx: dict, task_id: str) -> dict | None:
             await _release_slot(ctx, group, lease)
 
 
+def _captcha_source_label(url: str) -> str:
+    """Фрагмент « hh.ru» / « remoteok.com» для сообщения о капче.
+
+    Капча Cloudflare (docs/04 §5) приходит не только с hh.ru — при
+    мульти-источниковом автопоиске (docs/04 §10) она может сработать на любой
+    выбранной площадке (RemoteOK/Remotive/Greenhouse/Lever/Ashby/Trudvsem/
+    WeWorkRemotely). Поэтому сообщение пользователю называет реальный домен из
+    URL исключения, а не хардкод «hh.ru». Пустой/неизвестный URL → нейтрально.
+    """
+    host = (urlsplit(url or "").hostname or "").lower()
+    if not host:
+        return ""
+    # opendata.trudvsem.ru и подобные — показываем регистрируемый домен как есть.
+    return f" {host}"
+
+
 async def _execute_parsing(session: AsyncSession, task: Task) -> dict:
     """Выполнить задачу парсинга и зафиксировать её итоговый статус.
 
@@ -431,8 +448,12 @@ async def _execute_parsing(session: AsyncSession, task: Task) -> dict:
         # docs/04 §2 п.3, §5: капча → waiting_captcha (пауза под ручное
         # вмешательство), а не failed — задачу вернёт /tasks/{id}/resume.
         status = getattr(exc, "task_status", None) or "waiting_captcha"
+        # Источник капчи — реальный домен из URL (docs/04 §10 — мульти-источник):
+        # сообщение больше не твердит «hh.ru», когда капча пришла с RemoteOK/
+        # Remotive/Greenhouse/… Неизвестный источник → нейтральная формулировка.
+        source = _captcha_source_label(getattr(exc, "url", ""))
         message = (
-            f"Обнаружена капча hh.ru: {exc}. Требуется ручное вмешательство "
+            f"Обнаружена капча{source}: {exc}. Требуется ручное вмешательство "
             f"(docs/04 §2 п.3)"
         )
         await _finish_waiting_captcha(
@@ -442,18 +463,22 @@ async def _execute_parsing(session: AsyncSession, task: Task) -> dict:
             status=status,
             popup={
                 "type": "warning",
-                "title": "Капча hh.ru",
+                "title": f"Капча{source}",
                 "message": "Парсинг остановлен: требуется ручное вмешательство",
             },
         )
         return {"failed": 1, "error": "captcha", "status": task.status}
     except RateLimitExceeded as exc:
         # docs/04 §5: 429 после retry → задача не выполнена (retry исчерпан).
-        await _finish_failed(session, task, f"Превышен лимит запросов hh.ru: {exc}")
+        # Источник (домен) берём из URL исключения, если он проброшен — иначе
+        # нейтральная формулировка (докапчи/лимит бывает на любой площадке §10).
+        target = _captcha_source_label(getattr(exc, "url", "")) or " источника"
+        await _finish_failed(session, task, f"Превышен лимит запросов{target}: {exc}")
         return {"failed": 1, "error": str(exc)}
     except AntiBanError as exc:
         observe_task_outcome(task.task_type, "failed", reason="anti_ban")
-        await _finish_failed(session, task, f"Ошибка обхода защиты hh.ru: {exc}")
+        target = _captcha_source_label(getattr(exc, "url", "")) or " источника"
+        await _finish_failed(session, task, f"Ошибка обхода защиты{target}: {exc}")
         return {"failed": 1, "error": str(exc)}
     except Exception as exc:  # noqa: BLE001 — задача не должна ронять воркер
         logger.exception("Задача %s завершилась с ошибкой", task.id)
@@ -568,7 +593,11 @@ async def _dispatch_parsing(
     session: AsyncSession, task: Task, reporter: ProgressReporter
 ):
     """Маршрутизация задачи в нужный режим оркестратора (docs/04 §4)."""
-    from app.modules.parsing.service import DEFAULT_SOURCES, ParsingOrchestrator, normalize_blacklist
+    from app.modules.parsing.service import (
+        DEFAULT_SOURCES,
+        ParsingOrchestrator,
+        normalize_blacklist,
+    )
     from app.modules.vacancy_storage.service import extract_hh_vacancy_id
 
     payload = task.payload or {}

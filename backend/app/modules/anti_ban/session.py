@@ -20,10 +20,11 @@ from __future__ import annotations
 
 import asyncio
 import random
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from http.cookies import SimpleCookie
-from typing import Awaitable, Callable, Mapping
 
+from app.core.logging import get_logger
 from app.modules.anti_ban.constants import (
     DETECTION_BODY_LIMIT,
     MAX_FETCH_ATTEMPTS,
@@ -36,8 +37,10 @@ from app.modules.anti_ban.detectors import (
     Detection,
     ThreatKind,
     backoff_delay,
-    captcha_rate_exceeded as check_captcha_rate,
     classify_response,
+)
+from app.modules.anti_ban.detectors import (
+    captcha_rate_exceeded as check_captcha_rate,
 )
 from app.modules.anti_ban.exceptions import (
     AntiBanError,
@@ -45,7 +48,6 @@ from app.modules.anti_ban.exceptions import (
     ProxyError,
     RateLimitExceeded,
 )
-from app.core.logging import get_logger
 from app.modules.anti_ban.fingerprint import Fingerprint, generate_fingerprint
 from app.modules.anti_ban.proxy import ProxyEndpoint, ProxyRotator
 from app.modules.metrics.registry import inc_captcha, inc_fetch_total
@@ -70,7 +72,7 @@ class FetchResponse:
     url: str = ""
 
     @classmethod
-    def from_httpx(cls, response) -> "FetchResponse":
+    def from_httpx(cls, response) -> FetchResponse:
         """Обернуть реальный httpx-ответ."""
         return cls(
             status_code=response.status_code,
@@ -107,6 +109,7 @@ class AntiBanSession:
         sleeper: Callable[[float], Awaitable[None]] | None = None,
         fetcher: Fetcher | None = None,
         fingerprint: Fingerprint | None = None,
+        warmup_url: str | None = WARMUP_URL,
     ) -> None:
         self.rotator = rotator if rotator is not None else ProxyRotator.from_settings()
         self.rng = rng if rng is not None else random
@@ -115,8 +118,16 @@ class AntiBanSession:
         self.fingerprint = (
             fingerprint if fingerprint is not None else generate_fingerprint(self.rng)
         )
+        # URL прогрева сессии (docs/04 §3.3). По умолчанию — homepage hh.ru.
+        # ``None`` отключает прогрев: тогда fetch() не делает «лишнего» запроса
+        # на hh.ru, если среди выбранных источников hh нет (docs/04 §10) — иначе
+        # парсинг RemoteOK/Remotive/… падал бы на капче hh.ru ещё до первого
+        # реального запроса к целевому источнику.
+        self.warmup_url = warmup_url
         self.cookies: dict[str, str] = {}  # переиспользуются в рамках сессии (§3.3)
-        self.warmed_up = False
+        # Прогрев отключён (warmup_url=None) → сессия считается прогретой сразу:
+        # прогревать нечего, первый fetch() идёт прямо к целевому источнику.
+        self.warmed_up = warmup_url is None
         self.consecutive_404 = 0  # счётчик серии 404 (троттлинг, §5)
         self.request_count = 0  # отправлено запросов (включая прогрев/ретраи)
         self.response_count = 0  # получено ответов
@@ -213,21 +224,29 @@ class AntiBanSession:
 
     # --- прогрев (docs/04 §3.3) ----------------------------------------------
     async def warm_up(self, fetcher: Fetcher | None = None):
-        """Прогрев: первый запрос всегда на https://hh.ru/ (§3.3).
+        """Прогрев: первый запрос на homepage источника (по умолчанию https://hh.ru/, §3.3).
 
         Cookies homepage сохраняются и переиспользуются на целевых страницах.
         Сетевая ошибка прокси → failover на новый IP и повтор.
+
+        Если прогрев отключён (``warmup_url is None``, docs/04 §10 — среди
+        выбранных источников нет hh), метод ничего не делает: сессия уже
+        помечена ``warmed_up`` в ``__init__``, и fetch() его не вызывает.
 
         Raises:
             ProxyError: прокси недоступны все MAX_FETCH_ATTEMPTS попыток.
             CaptchaDetected: капча уже на прогреве (waiting_captcha, §5).
         """
+        # Прогрев выключен (не-hh источники) — нечего греть, выходим сразу.
+        if self.warmup_url is None:
+            self.warmed_up = True
+            return None
         fetch = fetcher if fetcher is not None else self._fetcher
         if fetch is None:
             raise AntiBanError("Для прогрева сессии нужен fetcher")
         last_error: Exception | None = None
         for _ in range(MAX_FETCH_ATTEMPTS):
-            request = self.prepare(WARMUP_URL)
+            request = self.prepare(self.warmup_url)
             try:
                 response = await fetch(request)
             except ProxyError as exc:
@@ -235,9 +254,9 @@ class AntiBanSession:
                 last_error = exc
                 continue
             self._store_cookies(response)
-            detection = self.handle_response(response, url=WARMUP_URL)
+            detection = self.handle_response(response, url=self.warmup_url)
             if detection.kind is ThreatKind.CAPTCHA:
-                raise CaptchaDetected(detection.detail)
+                raise CaptchaDetected(detection.detail, url=self.warmup_url)
             if detection.kind is ThreatKind.RATE_LIMITED:
                 delay = backoff_delay(1, detection.retry_after, self.rng)
                 self.rotator.report_rate_limit(delay)
@@ -299,7 +318,7 @@ class AntiBanSession:
             if detection.kind in (ThreatKind.OK, ThreatKind.NOT_FOUND):
                 return response
             if detection.kind is ThreatKind.CAPTCHA:
-                raise CaptchaDetected(detection.detail)
+                raise CaptchaDetected(detection.detail, url=url)
             if detection.kind is ThreatKind.RATE_LIMITED:
                 delay = backoff_delay(attempt, detection.retry_after, self.rng)
                 self.rotator.report_rate_limit(delay)  # смена IP + пауза (§3.2)

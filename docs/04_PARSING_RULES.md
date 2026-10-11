@@ -295,7 +295,7 @@ Playwright + stealth (§2), прогрев сессии, паузы 4–8 с, р
 | Поле | Тип | Описание |
 |------|-----|----------|
 | `source` | `VARCHAR(32) NOT NULL`, default `'hh'` | Источник вакансии. `'hh'` — значение по умолчанию (площадка, задаётся адаптером); значения `'auto'/'group'/'manual'` сохранены как режим ввода — фильтр `GET /vacancies?source=...` и контракт docs/02 §3.3 продолжают работать (CHECK `ck_vacancies_source` расширен допустимым `'hh'`) |
-| `external_id` | `VARCHAR(32) NOT NULL` | Внешний идентификатор вакансии у источника. Для hh — generated-колонка `GENERATED ALWAYS AS (hh_vacancy_id) STORED`: код хранения не менялся, а колонка всегда заполнена |
+| `external_id` | `VARCHAR(32)` | Внешний идентификатор вакансии у источника. Для hh — generated-колонка `GENERATED ALWAYS AS (hh_vacancy_id) STORED`: код хранения не менялся. Для прочих источников заполняется адаптером; NULL допускается для ручных/служебных вставок (docs/02 §3.3). |
 
 Составной уникальный индекс
 `uq_vacancies_user_source_external (user_id, source, external_id)` —

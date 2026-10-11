@@ -29,10 +29,20 @@ class CaptchaDetected(AntiBanError):
     #: Статус задачи парсинга по docs/04 §5 при появлении капчи.
     task_status: str = "waiting_captcha"
 
-    def __init__(self, detail: str, *, task_status: str | None = None) -> None:
+    def __init__(
+        self,
+        detail: str,
+        *,
+        task_status: str | None = None,
+        url: str | None = None,
+    ) -> None:
         super().__init__(detail)
         if task_status is not None:
             self.task_status = task_status
+        #: URL, на котором обнаружена капча. Пробрасывается до воркера, чтобы
+        #: сообщение пользователю называло реальный источник (docs/04 §10 —
+        #: мульти-источник), а не хардкод «hh.ru».
+        self.url = url or ""
 
 
 class RateLimitExceeded(AntiBanError):

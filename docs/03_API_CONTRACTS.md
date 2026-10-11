@@ -213,7 +213,7 @@ Queue Manager (docs/04 §6) и отвечает **202**:
 
 ### Фильтры для GET /vacancies
 - `status` — raw / analyzed / letter_ready / applied / error
-- `source` — auto / group / manual
+- `source` — hh / remoteok / remotive / weworkremotely / greenhouse / lever / ashby / trudvsem / auto / group / manual
 - `search` — поиск по названию и компании
 - `min_match_score`
 - `page`, `size`
@@ -239,6 +239,7 @@ Queue Manager (docs/04 §6) и отвечает **202**:
   "schedules": ["fullDay", "flexible"],
   "match_threshold": 80,
   "max_pages": 5,
+  "sources": ["hh"],
   "blacklist_enabled": true,
   "blacklist_words": ["ТК РФ", "ГПХ"]
 }
@@ -249,11 +250,14 @@ Queue Manager (docs/04 §6) и отвечает **202**:
 {
   "search_url": "https://novokuznetsk.hh.ru/vacancies/razrabotchik",
   "max_pages": 3,
+  "sources": ["hh"],
   "blacklist_enabled": true,
   "blacklist_words": ["ТК РФ"]
 }
 ```
 
+- `sources` (массив, по умолчанию `["hh"]`) — список источников для
+  мульти-источникового поиска (docs/04 §10.2). Поддерживается в `auto` и `group`.
 - `blacklist_enabled` (bool, по умолчанию `false`) — тумблер чёрного списка слов.
 - `blacklist_words` (массив строк, максимум 50) — слова, при совпадении с
   содержимым вакансии она не сохраняется в БД; ранее сохранённая удаляется

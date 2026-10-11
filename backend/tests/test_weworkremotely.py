@@ -374,10 +374,13 @@ async def test_search_filters_keywords_category_region_employment_and_limit():
     react = await adapter.search({"keywords": ["react"]})
     assert [card["external_id"] for card in react] == [FRONTEND_ID]
 
-    # категория выбирает ленту категории и фильтрует карточки
+    # категория выбирает ленту категории и фильтрует карточки.
+    # «Programming» — родительская категория: лента содержит и её
+    # подкатегории («Front-End Programming»), поэтому оба id проходят,
+    # а «Devops and Sysadmin» отсекается (docs/04 §4.1).
     programming = await adapter.search({"category": "programming"})
     assert adapter.http.requested[-1] == CATEGORY_FEED_URL
-    assert [card["external_id"] for card in programming] == [ACME_ID]
+    assert [card["external_id"] for card in programming] == [ACME_ID, FRONTEND_ID]
 
     germany = await adapter.search({"region": "germany"})
     assert [card["external_id"] for card in germany] == [GLOBEX_ID]

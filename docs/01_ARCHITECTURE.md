@@ -54,7 +54,7 @@
 |--------|------------------|----------------|-----------------|
 | **Auth Module** | Регистрация, авторизация, JWT | Логин/пароль | user_id, токены |
 | **User Profile Module** | Хранение резюме, настроек, порога матчинга, сокращённой версии резюме | Данные профиля, команда «Конвертировать» | Профиль + compact_resume |
-| **Parsing Orchestrator** | Управление тремя режимами сбора вакансий | Запрос на парсинг (авто/группа/ручной) | Список hh_vacancy_id + сырые данные |
+| **Parsing Orchestrator** | Управление режимами сбора вакансий и мульти-источниками (8 площадок, default hh) | Запрос на парсинг (авто/группа/ручной) с `sources` | Список hh_vacancy_id + сырые данные + список источников |
 | **Proxy & Anti-Ban Module** | Ротация прокси, fingerprints, задержки, human-mimicry, обработка 429/капчи | Запрос на HTTP/браузер | Успешный HTML/JSON или ошибка |
 | **Vacancy Storage Module** | Сохранение, дедупликация, обновление статусов | Сырые/очищенные данные вакансии | vacancy_id + текущий статус |
 | **Queue Manager** | Очереди Redis + ARQ (`career:queue:parsing`, `career:queue:llm`), контроль параллелизма | Новая задача | Статус задачи + прогресс |
@@ -90,6 +90,7 @@
 6. Analysis & Letter Module → Vacancy Storage (сохранение результатов + смена статуса)
 7. Realtime Module → Frontend (прогресс + готовый результат)
 
+
 ### 4.3. Flow: Обновление профиля и конвертация резюме
 1. Frontend → User Profile Module
 2. При нажатии «Конвертировать» → Billing Module (квота `analysis`) → Queue Manager → LLM Worker
@@ -107,6 +108,15 @@
 2. Frontend → `GET /api/v1/account/summary` → объём данных до удаления
 3. Frontend → `DELETE /api/v1/account` → каскадное удаление всех связанных строк
 4. Privacy Module → отчёт по количеству удалённых строк в каждой таблице
+
+### 4.6. Flow: Мульти-источниковый сбор вакансий (Parsing Flow, extended)
+1. API Gateway → Parsing Orchestrator с полем `sources` (по умолчанию `["hh"]` — docs/04 §10.2).
+2. Parsing Orchestrator → `SourceRegistry` (§10.3): для каждого источника в `sources` создаётся адаптер `BaseSourceAdapter` (§10.1) через `SourceRegistry.create(...)` с общей `AntiBanSession`.
+3. Каждый адаптер собирает карточки по своему контракту (§10.1): `search()`, `get_vacancy()`, `normalize()`. За투명성 не входят: общая сессия, fallback chain, Anti-Ban (§2–§3).
+4. Оркестратор делегирует адаптерам лишь URL-логику: `build_search_url`, `validate_search_url`, `page_url`, `parse_listing`, `build_vacancy_url`, `extract_fields`.
+5. Нормализованные вакансии поступают на `Vacancy Storage Module` для сохранения + дедупликации по `(user_id, source, external_id)`.
+6. Расширение нового источника = класс `BaseSourceAdapter` + `register(adapter)` (docs/04 §10.1–§10.3). Без изменений оркестратора, очереди и API.
+
 
 ---
 

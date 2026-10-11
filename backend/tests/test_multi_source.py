@@ -389,3 +389,41 @@ async def test_db_composite_source_external_unique(engine):
         async with engine.begin() as conn:
             await conn.execute(text(insert), {"u": user_id})
 
+
+# ============================================================
+# Прогрев сессии не долбит hh.ru без hh в источниках (docs/04 §3.3, §10)
+# ============================================================
+
+
+def test_orchestrator_without_hh_disables_hh_warmup():
+    """Автопоиск без hh: сессия создаётся с warmup_url=None (прогрев отключён).
+
+    Регрессия: раньше AntiBanSession.fetch() ВСЕГДА прогревался на https://hh.ru/
+    (docs/04 §3.3) перед первым запросом — даже когда hh не входит в выбранные
+    источники. Из-за этого парсинг RemoteOK/Remotive/… падал на капче hh.ru ещё
+    до первого реального обращения к целевому источнику.
+    """
+    orchestrator = ParsingOrchestrator(sources=["remoteok", "greenhouse"])
+    assert orchestrator.http.warmup_url is None  # прогрев на hh.ru отключён
+    assert orchestrator.http.warmed_up is True  # сессия «готова» без прогрева
+
+
+def test_orchestrator_with_hh_keeps_hh_warmup():
+    """Если среди источников есть hh — прогрев на hh.ru сохраняется (§3.3)."""
+    from app.modules.anti_ban.constants import WARMUP_URL
+
+    orchestrator = ParsingOrchestrator(sources=["hh", "remoteok"])
+    assert orchestrator.http.warmup_url == WARMUP_URL
+    assert orchestrator.http.warmed_up is False  # прогреем перед первым запросом
+
+
+def test_orchestrator_default_sources_keep_hh_warmup():
+    """Дефолт (sources=None → ['hh']) сохраняет прежнее поведение с прогревом."""
+    from app.modules.anti_ban.constants import WARMUP_URL
+
+    orchestrator = ParsingOrchestrator()
+    assert orchestrator.sources == ["hh"]
+    assert orchestrator.http.warmup_url == WARMUP_URL
+    assert orchestrator.http.warmed_up is False
+
+

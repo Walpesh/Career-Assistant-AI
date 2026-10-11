@@ -401,7 +401,7 @@ function taskMessage(task) {
     case 'processing': return 'В обработке…';
     case 'completed': return 'Задача завершена';
     case 'failed': return 'Задача завершилась ошибкой';
-    case 'waiting_captcha': return 'Требуется прохождение капчи hh.ru';
+    case 'waiting_captcha': return 'Требуется прохождение капчи';
     default: return '';
   }
 }

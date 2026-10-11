@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.anti_ban import AntiBanSession, CaptchaDetected, RateLimitExceeded
+from app.modules.anti_ban import WARMUP_URL, AntiBanSession, CaptchaDetected, RateLimitExceeded
 from app.modules.anti_ban.session import FetchResponse
 from app.modules.parsing.fetcher import build_page_fetcher
 from app.modules.parsing.sources import BaseSourceAdapter, SourceRegistry, default_registry
@@ -190,10 +190,20 @@ class ParsingOrchestrator:
         sources: list[str] | None = None,
         registry: SourceRegistry | None = None,
     ) -> None:
-        # Сессия сама обеспечивает прогрев, паузы 4–8 с, ротацию IP и retry (§3, §5).
-        self.http = session or AntiBanSession(fetcher=build_page_fetcher())
         # Источники по умолчанию — только hh: прежнее поведение без изменений.
         self.sources: list[str] = list(sources or DEFAULT_SOURCES)
+        # Прогрев сессии на hh.ru (docs/04 §3.3) осмыслен ТОЛЬКО когда среди
+        # выбранных источников есть hh: cookies homepage hh.ru нужны лишь для
+        # обхода его защиты. Если hh не выбран (docs/04 §10 — RemoteOK/Remotive/
+        # Greenhouse/Lever/Ashby/Trudvsem/WeWorkRemotely), прогрев на hh.ru —
+        # лишний запрос, который падает на капче hh.ru ещё до первого реального
+        # обращения к целевому источнику. Поэтому в не-hh режиме прогрев отключён
+        # (warmup_url=None), и fetch() сразу идёт к нужному источнику.
+        warmup_url = WARMUP_URL if "hh" in self.sources else None
+        # Сессия сама обеспечивает прогрев, паузы 4–8 с, ротацию IP и retry (§3, §5).
+        self.http = session or AntiBanSession(
+            fetcher=build_page_fetcher(), warmup_url=warmup_url
+        )
         self.registry = registry or default_registry()
         # Все адаптеры работают в ОДНОЙ сессии: общие прокси, паузы и
         # статистика трафика Proxy Usage Logger (docs/04 §3).

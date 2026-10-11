@@ -95,12 +95,14 @@
 | description_html  | TEXT             |                                          | Оригинальный HTML (опционально)               |
 | status            | VARCHAR(32)      | NOT NULL, DEFAULT 'raw'                 | raw / analyzed / letter_ready / applied / error |
 | match_score       | SMALLINT         | CHECK (0–100)                            | Итоговый балл матчинга                        |
-| source            | VARCHAR(32)      |                                          | auto / group / manual                         |
+| source            | VARCHAR(32)      |                                          | hh / remoteok / remotive / weworkremotely / greenhouse / lever / ashby / trudvsem / auto / group / manual                         |
+| external_id       | VARCHAR(32)      | NOT NULL via generated column (nullable here); NOT NULL on insert for real vacancies | External identifier of the source. For hh generated from hh_vacancy_id; for other sources populated by the adapter; NULL allowed for manual/service rows. |
 | created_at        | TIMESTAMPTZ      | DEFAULT now()                            |                                               |
 | updated_at        | TIMESTAMPTZ      | DEFAULT now()                            |                                               |
 
 **Индексы:**
 - UNIQUE (user_id, hh_vacancy_id)
+- UNIQUE (user_id, source, external_id) (multisource dedup; docs/04 §10.4)
 - INDEX (user_id, status)
 - INDEX (user_id, created_at DESC)
 

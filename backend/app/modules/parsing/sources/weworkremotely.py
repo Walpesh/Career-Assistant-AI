@@ -533,6 +533,26 @@ def _as_int(value: object) -> int | None:
     return result if result > 0 else None
 
 
+def _category_matches(requested: str, job_category: str | None) -> bool:
+    """Совпадение категории карточки с запрошенной категорией выдачи.
+
+    WWR публикует родительские категории (например, «Programming») и
+    подкатегории («Full-Stack Programming», «Back-End Programming»,
+    «Front-End Programming»). Лента родительской категории физически
+    содержит элементы подкатегорий, поэтому запрос «Programming» должен их
+    пропускать. Совпадение — точное либо вхождение запрошенной категории в
+    категорию карточки на границах слов (``\\b``). Узкая подкатегория при
+    этом не матчится частичным именем.
+    """
+    if not job_category:
+        return False
+    cat = job_category.casefold()
+    want = requested.casefold()
+    if cat == want:
+        return True
+    return re.search(rf"\b{re.escape(want)}\b", cat) is not None
+
+
 def _matches_filters(
     job: dict,
     keywords: list[str],
@@ -557,7 +577,7 @@ def _matches_filters(
     if any(keyword not in text for keyword in keywords):
         return False
     job_category = _as_text(job.get("category"))
-    if category and (job_category or "").casefold() != category.casefold():
+    if category and not _category_matches(category, job_category):
         return False
     if region:
         area = _as_text(
