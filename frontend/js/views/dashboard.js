@@ -16,6 +16,7 @@ import { progressBarHTML, updateProgressBar } from '../components/progress.js';
 import { taskStatusBadge, TASK_TYPE_LABELS } from '../components/badges.js';
 import { formatDateTime, escapeHtml, clamp } from '../core/utils.js';
 import { confirmDialog } from '../components/overlay.js';
+import { mapAutoFilters } from '../core/filter-mapping.js';
 
 const HH_SEARCH_URL = /^https?:\/\/([\w-]+\.)*hh\.ru\//i;
 const HH_VACANCY_URL = /^https?:\/\/([\w-]+\.)*hh\.ru\/vacancy\/\d+/i;
@@ -209,12 +210,18 @@ async function submitAuto() {
     sources: sourcesFromBox('auto'),
     ...blacklistPayload('auto')
   };
-  const employment = chipValues('employment');
-  const formats = chipValues('work_format');
-  const schedules = chipValues('schedule');
-  if (employment.length) payload.employment_forms = employment;
-  if (formats.length) payload.work_formats = formats;
-  if (schedules.length) payload.schedules = schedules;
+  // Фильтры приводятся к кодам-энумам бэкенда (docs/03 §5, schemas.py →
+  // ParseAutoRequest). chipValues() отдаёт input.value (текущие чекбоксы уже
+  // содержат коды), mapAutoFilters() дополнительно транслирует русские подписи
+  // и отбрасывает неизвестные значения — payload не может упасть в 400.
+  const filters = mapAutoFilters({
+    employment: chipValues('employment'),
+    work_formats: chipValues('work_format'),
+    schedules: chipValues('schedule')
+  });
+  if (filters.employment_forms.length) payload.employment_forms = filters.employment_forms;
+  if (filters.work_formats.length) payload.work_formats = filters.work_formats;
+  if (filters.schedules.length) payload.schedules = filters.schedules;
   const cityValue = cityInput ? cityInput.value.trim() : '';
   if (cityValue) payload.city = cityValue;
 
