@@ -568,11 +568,16 @@ async def _dispatch_parsing(
     session: AsyncSession, task: Task, reporter: ProgressReporter
 ):
     """Маршрутизация задачи в нужный режим оркестратора (docs/04 §4)."""
-    from app.modules.parsing.service import ParsingOrchestrator, normalize_blacklist
+    from app.modules.parsing.service import DEFAULT_SOURCES, ParsingOrchestrator, normalize_blacklist
     from app.modules.vacancy_storage.service import extract_hh_vacancy_id
 
     payload = task.payload or {}
-    orchestrator = ParsingOrchestrator()
+    # Источники (docs/04 §10): список площадок из payload; по умолчанию ['hh'],
+    # поэтому существующие задачи без sources парсятся строго по-hh. Пустой
+    # список трактуем как значение по умолчанию — автопоиск не должен молча
+    # вернуть ноль вакансий из-за отсутствующего поля.
+    sources = list(payload.get("sources") or DEFAULT_SOURCES)
+    orchestrator = ParsingOrchestrator(sources=sources)
     # Пробрасываем HTTP-сессию в contextvar: после выполнения из неё снимаются
     # счётчики объёма трафика и капчи для Proxy Usage Logger.
     _CURRENT_PARSING_SESSION.set(orchestrator.http)

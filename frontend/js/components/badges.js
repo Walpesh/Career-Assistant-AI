@@ -28,7 +28,19 @@ export function statusBadge(status) {
   return `<span class="badge ${classes}">${escapeHtml(label)}</span>`;
 }
 
-export const SOURCE_LABELS = { auto: 'Автопоиск', group: 'Групповой', manual: 'Ручное' };
+export const SOURCE_LABELS = {
+  hh: 'HH',
+  remoteok: 'RemoteOK',
+  remotive: 'Remotive',
+  weworkremotely: 'We Work Remote',
+  greenhouse: 'Greenhouse',
+  lever: 'Lever',
+  ashby: 'Ashby',
+  trudvsem: 'Trudvsem',
+  auto: 'Автопоиск',
+  group: 'Групповой',
+  manual: 'Ручное'
+};
 
 export function sourceBadge(source) {
   if (!source) return '';

@@ -2,7 +2,7 @@
 
 Контракт (все возвращают { task_id, status: "pending" }):
     POST /parsing/auto   — Автопоиск: { keywords[], employment_forms[],
-                            work_formats[], schedules[], match_threshold, max_pages }
+                            work_formats[], schedules[], match_threshold, max_pages, sources=["hh"] }
     POST /parsing/group  — Групповой парсер: { search_url, max_pages }
     POST /parsing/manual — Ручное добавление: { vacancy_url, run_analysis }
 

@@ -47,6 +47,45 @@
       <label for="auto-city" class="mb-1.5 block text-xs font-medium text-slate-400">Город</label>
       <input id="auto-city" type="text" class="input" placeholder="Москва, Санкт-Петербург или оставьте пустым" />
       <p class="hint mt-1">Оставьте пустым — поиск без города (по всей России).</p>
+
+    <!-- Источники парсинга (мульти-выбор; по умолчанию hh) -->
+    <div class="mt-4 rounded-xl border border-slate-800 bg-slate-950/60 p-4" data-source-box="auto">
+      <div class="flex flex-wrap items-center gap-2">
+        <label class="flex items-center gap-1.5 cursor-pointer">
+          <input type="checkbox" value="hh" checked class="h-4 w-4 rounded border-slate-600 bg-slate-900 accent-indigo-500" />
+          <span class="truncate rounded border border-slate-700 bg-slate-800/60 px-1.5 py-0.5 text-xs text-slate-300">HH</span>
+        </label>
+        <label class="flex items-center gap-1.5 cursor-pointer">
+          <input type="checkbox" value="remoteok" class="h-4 w-4 rounded border-slate-600 bg-slate-900 accent-indigo-500" />
+          <span class="truncate rounded border border-slate-700 bg-slate-800/60 px-1.5 py-0.5 text-xs text-slate-300">RemoteOK</span>
+        </label>
+        <label class="flex items-center gap-1.5 cursor-pointer">
+          <input type="checkbox" value="remotive" class="h-4 w-4 rounded border-slate-600 bg-slate-900 accent-indigo-500" />
+          <span class="truncate rounded border border-slate-700 bg-slate-800/60 px-1.5 py-0.5 text-xs text-slate-300">Remotive</span>
+        </label>
+        <label class="flex items-center gap-1.5 cursor-pointer">
+          <input type="checkbox" value="weworkremotely" class="h-4 w-4 rounded border-slate-600 bg-slate-900 accent-indigo-500" />
+          <span class="truncate rounded border border-slate-700 bg-slate-800/60 px-1.5 py-0.5 text-xs text-slate-300">We Work Remote</span>
+        </label>
+        <label class="flex items-center gap-1.5 cursor-pointer">
+          <input type="checkbox" value="greenhouse" class="h-4 w-4 rounded border-slate-600 bg-slate-900 accent-indigo-500" />
+          <span class="truncate rounded border border-slate-700 bg-slate-800/60 px-1.5 py-0.5 text-xs text-slate-300">Greenhouse</span>
+        </label>
+        <label class="flex items-center gap-1.5 cursor-pointer">
+          <input type="checkbox" value="lever" class="h-4 w-4 rounded border-slate-600 bg-slate-900 accent-indigo-500" />
+          <span class="truncate rounded border border-slate-700 bg-slate-800/60 px-1.5 py-0.5 text-xs text-slate-300">Lever</span>
+        </label>
+        <label class="flex items-center gap-1.5 cursor-pointer">
+          <input type="checkbox" value="ashby" class="h-4 w-4 rounded border-slate-600 bg-slate-900 accent-indigo-500" />
+          <span class="truncate rounded border border-slate-700 bg-slate-800/60 px-1.5 py-0.5 text-xs text-slate-300">Ashby</span>
+        </label>
+        <label class="flex items-center gap-1.5 cursor-pointer">
+          <input type="checkbox" value="trudvsem" class="h-4 w-4 rounded border-slate-600 bg-slate-900 accent-indigo-500" />
+          <span class="truncate rounded border border-slate-700 bg-slate-800/60 px-1.5 py-0.5 text-xs text-slate-300">Trudvsem</span>
+        </label>
+      </div>
+      <p class="hint mt-2 text-[11px]">По умолчанию выбрана HH; оставьте только hh, чтобы вернуться к прежнему поведению.</p>
+    </div>
     </div>
 
     <div class="mt-5 grid gap-5 lg:grid-cols-2">
@@ -136,6 +175,46 @@
       <label for="group-max-pages" class="mb-1.5 block text-xs font-medium text-slate-400">Страниц (макс.)</label>
       <input id="group-max-pages" type="number" class="input" min="1" max="10" step="1" value="3" />
     </div>
+
+    <!-- Источники парсинга (мульти-выбор; по умолчанию hh, docs/04 §10) -->
+    <div class="mt-4 rounded-xl border border-slate-800 bg-slate-950/60 p-4" data-source-box="group">
+      <div class="flex flex-wrap items-center gap-2">
+        <label class="flex items-center gap-1.5 cursor-pointer">
+          <input type="checkbox" value="hh" checked class="h-4 w-4 rounded border-slate-600 bg-slate-900 accent-indigo-500" />
+          <span class="truncate rounded border border-slate-700 bg-slate-800/60 px-1.5 py-0.5 text-xs text-slate-300">HH</span>
+        </label>
+        <label class="flex items-center gap-1.5 cursor-pointer">
+          <input type="checkbox" value="remoteok" class="h-4 w-4 rounded border-slate-600 bg-slate-900 accent-indigo-500" />
+          <span class="truncate rounded border border-slate-700 bg-slate-800/60 px-1.5 py-0.5 text-xs text-slate-300">RemoteOK</span>
+        </label>
+        <label class="flex items-center gap-1.5 cursor-pointer">
+          <input type="checkbox" value="remotive" class="h-4 w-4 rounded border-slate-600 bg-slate-900 accent-indigo-500" />
+          <span class="truncate rounded border border-slate-700 bg-slate-800/60 px-1.5 py-0.5 text-xs text-slate-300">Remotive</span>
+        </label>
+        <label class="flex items-center gap-1.5 cursor-pointer">
+          <input type="checkbox" value="weworkremotely" class="h-4 w-4 rounded border-slate-600 bg-slate-900 accent-indigo-500" />
+          <span class="truncate rounded border border-slate-700 bg-slate-800/60 px-1.5 py-0.5 text-xs text-slate-300">We Work Remote</span>
+        </label>
+        <label class="flex items-center gap-1.5 cursor-pointer">
+          <input type="checkbox" value="greenhouse" class="h-4 w-4 rounded border-slate-600 bg-slate-900 accent-indigo-500" />
+          <span class="truncate rounded border border-slate-700 bg-slate-800/60 px-1.5 py-0.5 text-xs text-slate-300">Greenhouse</span>
+        </label>
+        <label class="flex items-center gap-1.5 cursor-pointer">
+          <input type="checkbox" value="lever" class="h-4 w-4 rounded border-slate-600 bg-slate-900 accent-indigo-500" />
+          <span class="truncate rounded border border-slate-700 bg-slate-800/60 px-1.5 py-0.5 text-xs text-slate-300">Lever</span>
+        </label>
+        <label class="flex items-center gap-1.5 cursor-pointer">
+          <input type="checkbox" value="ashby" class="h-4 w-4 rounded border-slate-600 bg-slate-900 accent-indigo-500" />
+          <span class="truncate rounded border border-slate-700 bg-slate-800/60 px-1.5 py-0.5 text-xs text-slate-300">Ashby</span>
+        </label>
+        <label class="flex items-center gap-1.5 cursor-pointer">
+          <input type="checkbox" value="trudvsem" class="h-4 w-4 rounded border-slate-600 bg-slate-900 accent-indigo-500" />
+          <span class="truncate rounded border border-slate-700 bg-slate-800/60 px-1.5 py-0.5 text-xs text-slate-300">Trudvsem</span>
+        </label>
+      </div>
+      <p class="hint mt-2 text-[11px]">По умолчанию выбрана HH; первая отмеченная площадка — основная для готовой ссылки (docs/04 §10.2).</p>
+    </div>
+
     <!-- Чёрный список слов (Групповой парсер) -->
     <div class="mt-5 rounded-xl border border-slate-800 bg-slate-950/60 p-4" data-blacklist-box="group">
       <label class="flex cursor-pointer items-center justify-between gap-3">

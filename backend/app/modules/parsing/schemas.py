@@ -12,9 +12,36 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from app.modules.parsing.service import MAX_BLACKLIST_WORDS
+from app.modules.parsing.service import DEFAULT_SOURCES, MAX_BLACKLIST_WORDS
+
+#: Все 8 поддерживаемых источников парсинга (docs/04 §10).
+#: Порядок фиксирован: первый элемент — значение по умолчанию.
+SUPPORTED_SOURCES: tuple[str, ...] = (
+    "hh",
+    "remoteok",
+    "remotive",
+    "weworkremotely",
+    "greenhouse",
+    "lever",
+    "ashby",
+    "trudvsem",
+)
+
+#: Тип источника для валидации Pydantic (Literal даёт 422 при неизвестном).
+ParsingSource = Literal[
+    "hh",
+    "remoteok",
+    "remotive",
+    "weworkremotely",
+    "greenhouse",
+    "lever",
+    "ashby",
+    "trudvsem",
+]
 
 __all__ = [
+    "ParsingSource",
+    "SUPPORTED_SOURCES",
     "ParseAutoRequest",
     "ParseGroupRequest",
     "ParseManualRequest",
@@ -54,6 +81,14 @@ class ParseAutoRequest(BaseModel):
         default=None,
         description="Целевое название города для фильтрации вакансий (если пусто — поиск по всей России без городов)",
     )
+    sources: list[ParsingSource] = Field(
+        default_factory=lambda: list(DEFAULT_SOURCES),
+        description=(
+            "Площадки-источники для мульти-источникового поиска (docs/04 §10). "
+            "По умолчанию ['hh'] — прежнее поведение без изменений. Автопоиск "
+            "обходит все выбранные источники и складывает результаты."
+        ),
+    )
     blacklist_enabled: bool = Field(
         default=False,
         description="Включён ли чёрный список слов (docs/04 §4.9). Выключен — фильтр не применяется",
@@ -71,6 +106,7 @@ class ParseAutoRequest(BaseModel):
         "schedules": ["fullDay"],
         "match_threshold": 75,
         "max_pages": 5,
+        "sources": ["hh", "remoteok", "greenhouse"],
         "blacklist_enabled": True,
         "blacklist_words": ["ТК РФ", "1С"]
     }}}
@@ -81,6 +117,14 @@ class ParseGroupRequest(BaseModel):
 
     search_url: str = Field(..., description="URL результатов поиска на hh.ru")
     max_pages: int = Field(default=5, ge=1, le=20, description="Максимальное количество страниц")
+    sources: list[ParsingSource] = Field(
+        default_factory=lambda: list(DEFAULT_SOURCES),
+        description=(
+            "Площадки-источники группового парсинга (docs/04 §10). "
+            "По умолчанию ['hh']. Первый источник используется как основной для "
+            "готовой ссылки; остальные — при наличии у них hooks автопоиска."
+        ),
+    )
     blacklist_enabled: bool = Field(
         default=False,
         description="Включён ли чёрный список слов (docs/04 §4.9). Выключен — фильтр не применяется",

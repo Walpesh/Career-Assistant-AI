@@ -224,7 +224,7 @@ function vacancyCardHTML(vacancy, threshold) {
   const hasLetterContent = Boolean(vacancy.cover_letter?.content);
   const canRespond = Boolean(vacancy.hh_vacancy_id) && (status === 'letter_ready' || hasLetterContent);
 
-  return `<article class="card p-4 ${isSelected ? 'border-indigo-500/50' : ''}" data-vacancy-id="${escapeHtml(vacancy.id)}">
+  return `<article class="card p-4 ${isSelected ? 'border-indigo-500/50' : ''}" data-vacancy-id="${escapeHtml(vacancy.id)}" data-source="${escapeHtml(vacancy.source || '')}">
     <div class="flex items-start gap-3">
       <input type="checkbox" data-vacancy-select class="mt-1 h-4 w-4 shrink-0 rounded border-slate-600 bg-slate-900 accent-indigo-500"
              ${isSelected ? 'checked' : ''} aria-label="Выбрать вакансию" />

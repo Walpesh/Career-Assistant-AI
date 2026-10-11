@@ -116,7 +116,14 @@ async def upsert_vacancy(
     fields: dict[str, object],
     ingest_status: str = "raw",
 ) -> tuple[Vacancy, bool]:
-    """Сохранение вакансии с дедупликацией по (user_id, hh_vacancy_id).
+    """Сохранение вакансии с дедупликацией по (user_id, source, external_id).
+
+    Ключ дедупликации мульти-источникового парсинга (docs/04 §10.4):
+    ``(user_id, source, external_id)``. ``external_id`` — generated-колонка
+    ``= hh_vacancy_id`` (docs/02 §3.3), поэтому в запросе используется
+    ``hh_vacancy_id``: ``(user_id, source, hh_vacancy_id)``. Учёт ``source``
+    обязателен — иначе вакансия «123» с greenhouse затирала бы вакансию «123»
+    с lever (совпадение внешних id у разных площадок не должно склеиваться).
 
     Args:
         fields:        контент-поля парсинга (None не затирают сохранённое);
@@ -127,7 +134,7 @@ async def upsert_vacancy(
         (status='applied').
 
     Гонка двух одинаковых запросов гасится уникальным индексом
-    uq_vacancies_user_hh_vacancy: IntegrityError → повторный SELECT.
+    uq_vacancies_user_source_external: IntegrityError → повторный SELECT.
     """
     content = {key: value for key, value in fields.items() if value is not None}
 
@@ -135,6 +142,7 @@ async def upsert_vacancy(
         existing = await db.scalar(
             select(Vacancy).where(
                 Vacancy.user_id == user_id,
+                Vacancy.source == source,
                 Vacancy.hh_vacancy_id == hh_vacancy_id,
             )
         )

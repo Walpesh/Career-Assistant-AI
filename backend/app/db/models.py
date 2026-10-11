@@ -153,11 +153,14 @@ class Vacancy(Base, TimestampMixin):
             "status IN ('raw', 'analyzed', 'letter_ready', 'applied', 'error')",
             name="ck_vacancies_status",
         ),
-        # 'hh' — источник по умолчанию (multi-source, docs/04 §10.4);
-        # 'auto'/'group'/'manual' — режимы ввода, сохранённые для
-        # обратной совместимости фильтров API и контракта docs/02 §3.3.
+        # docs/04 §10.4: 8 площадок мульти-источникового парсинга (hh —
+        # значение по умолчанию) + режимы ввода auto/group/manual, сохранённые
+        # для обратной совместимости фильтра GET /vacancies?source=... и
+        # контракта docs/02 §3.3.
         CheckConstraint(
-            "source IN ('hh', 'auto', 'group', 'manual')",
+            "source IN ('hh', 'remoteok', 'remotive', 'weworkremotely', "
+            "'greenhouse', 'lever', 'ashby', 'trudvsem', "
+            "'auto', 'group', 'manual')",
             name="ck_vacancies_source",
         ),
         CheckConstraint(
@@ -220,11 +223,14 @@ class Vacancy(Base, TimestampMixin):
     #: Внешний идентификатор вакансии у источника (docs/04 §10.4).
     #: Для hh синхронизируется с hh_vacancy_id (generated column), поэтому
     #: существующий код хранения не меняется, а составной уникальный индекс
-    #: (user_id, source, external_id) всегда заполнен.
-    external_id: Mapped[str] = mapped_column(
+    #: (user_id, source, external_id) всегда заполнен для реальных вакансий.
+    #: Nullable — для ручных/служебных вставок, где внешний id не определён:
+    #: дедупликацию таких строк обеспечивает uq_vacancies_user_hh_vacancy, а
+    #: NULL external_id в unique-индексе Postgres сам с собой не конфликтует.
+    external_id: Mapped[str | None] = mapped_column(
         String(32),
         Computed("hh_vacancy_id", persisted=True),
-        nullable=False,
+        nullable=True,
     )
 
     user: Mapped[User] = relationship(back_populates="vacancies")

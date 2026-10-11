@@ -15,7 +15,24 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # Перечисления дублируют CHECK-ограничения app.db.models.Vacancy (docs/02 §3.3).
 VacancyStatus = Literal["raw", "analyzed", "letter_ready", "applied", "error"]
-VacancySource = Literal["auto", "group", "manual"]
+
+#: Источник вакансии (docs/04 §10.4): 8 площадек мульти-источникового парсинга
+#: + режимы ввода auto/group/manual, сохранённые для обратной совместимости
+#: фильтра ``GET /vacancies?source=...`` и контракта docs/02 §3.3. Значение по
+#: умолчанию при парсинге — «hh» (docs/04 §10.2 → DEFAULT_SOURCES).
+VacancySource = Literal[
+    "hh",
+    "remoteok",
+    "remotive",
+    "weworkremotely",
+    "greenhouse",
+    "lever",
+    "ashby",
+    "trudvsem",
+    "auto",
+    "group",
+    "manual",
+]
 
 __all__ = [
     "VacancyStatus",

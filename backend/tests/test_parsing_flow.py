@@ -592,7 +592,8 @@ async def test_auto_mode_collects_persists_and_reports_progress(engine, user_fac
     assert first.area == "Москва"
     assert first.published_at is not None
     assert "разработка на Python" in (first.description_raw or "")
-    assert first.status == "raw" and first.source == "auto"
+    # docs/04 §10.4: source хранит площадку (борд), а не режим ввода.
+    assert first.status == "raw" and first.source == "hh"
 
     # docs/04 §6: прогресс в формате current/total/stage/message.
     assert any(stage == "parsing_vacancy" for _, _, stage, _ in events)
@@ -726,7 +727,8 @@ async def test_group_mode_walks_pagination_and_keeps_filters(engine, user_factor
 
     assert outcome.pages_visited == 2
     assert sorted(outcome.vacancy_ids) == ["301", "302"]
-    assert all(row.source == "group" for row in rows)
+    # docs/04 §10.4: источник вакансии — площадка «hh», а не режим «group».
+    assert all(row.source == "hh" for row in rows)
     # Фильтр area из пользовательской ссылки не потерялся при пагинации.
     assert any("area=1" in url for url in orchestrator.http.requested)
 
@@ -749,7 +751,8 @@ async def test_manual_mode_single_request_and_persistence(engine, user_factory):
     assert len(fake.requested) == 1  # ровно один запрос, без прогрева
     assert outcome.created == 1
     assert rows[0].hh_vacancy_id == "137866214"
-    assert rows[0].source == "manual" and rows[0].status == "raw"
+    # docs/04 §10.4: источник — площадка «hh» (режим «manual» больше не source).
+    assert rows[0].source == "hh" and rows[0].status == "raw"
 
 
 async def test_deleted_vacancy_marked_error(engine, user_factory):

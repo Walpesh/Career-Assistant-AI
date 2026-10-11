@@ -85,7 +85,7 @@ async def test_manual_ingestion_creates_raw_vacancy(client, monkeypatch):
 
     assert data["hh_vacancy_id"] == "137866214"  # id из ссылки
     assert data["status"] == "raw"  # docs/02 §5: только добавлена
-    assert data["source"] == "manual"
+    assert data["source"] == "hh"  # docs/04 §10.4: источник — площадка, не режим
     assert data["url"] == VACANCY_URL
     assert data["title"] == RAW_FIELDS["title"]
     assert data["salary_from"] == RAW_FIELDS["salary_from"]
@@ -269,11 +269,13 @@ async def test_list_pagination_and_filters(client, monkeypatch, engine):
     raw = await client.get(f"{API}/vacancies?status=raw", headers=headers)
     assert raw.json()["total"] == 2
 
-    # Фильтр по источнику (все добавлены вручную) и невалидное значение.
-    assert (await client.get(f"{API}/vacancies?source=manual", headers=headers)).json()[
+    # Фильтр по источнику (все добавлены вручную → площадка «hh») и неизвестный
+    # источник даёт 0. Значения auto/group/manual допустимы как легаси-режимы,
+    # но новых вакансий с таким source больше не появляется (docs/04 §10.4).
+    assert (await client.get(f"{API}/vacancies?source=hh", headers=headers)).json()[
         "total"
     ] == 3
-    assert (await client.get(f"{API}/vacancies?source=auto", headers=headers)).json()[
+    assert (await client.get(f"{API}/vacancies?source=greenhouse", headers=headers)).json()[
         "total"
     ] == 0
     bad = await client.get(f"{API}/vacancies?status=processing", headers=headers)

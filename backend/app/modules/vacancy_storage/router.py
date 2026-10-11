@@ -53,7 +53,21 @@ from app.modules.vacancy_storage.service import (
 router = APIRouter(prefix="/vacancies", tags=["vacancies"])
 
 _VacancyStatus = Literal["raw", "analyzed", "letter_ready", "applied", "error"]
-_VacancySource = Literal["auto", "group", "manual"]
+#: Источник (docs/04 §10.4): 8 площадок + режимы ввода auto/group/manual для
+#: обратной совместимости фильтра ``GET /vacancies?source=...``.
+_VacancySource = Literal[
+    "hh",
+    "remoteok",
+    "remotive",
+    "weworkremotely",
+    "greenhouse",
+    "lever",
+    "ashby",
+    "trudvsem",
+    "auto",
+    "group",
+    "manual",
+]
 
 
 @router.get("", response_model=VacancyListOut, summary="Список вакансий пользователя")
@@ -144,7 +158,7 @@ async def manual_ingestion(
         user_id=user.id,
         hh_vacancy_id=hh_vacancy_id,
         url=payload.vacancy_url,
-        source="manual",
+        source="hh",
         fields=fields,
         ingest_status=ingest_status,
     )

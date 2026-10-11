@@ -206,6 +206,7 @@ async function submitAuto() {
     keywords,
     match_threshold: clamp(getMatchThreshold(), 0, 100),
     max_pages: clamp(Number(els.autoMaxPages.value) || 3, 1, 10),
+    sources: sourcesFromBox('auto'),
     ...blacklistPayload('auto')
   };
   const employment = chipValues('employment');
@@ -229,6 +230,7 @@ async function submitGroup() {
   const payload = {
     search_url: url,
     max_pages: clamp(Number(els.groupMaxPages.value) || 3, 1, 10),
+    sources: sourcesFromBox('group'),
     ...blacklistPayload('group')
   };
   await createTask(() => api.parseGroup(payload), els.groupButton, 'Групповой парсинг запущен');
@@ -245,6 +247,20 @@ async function submitManual() {
     run_analysis: els.manualRunAnalysis.checked
   };
   await createTask(() => api.parseManual(payload), els.manualButton, 'Вакансия добавлена в очередь');
+}
+
+/**
+ * Отмеченные источники из бокса режима (docs/04 §10). Синхронно: вызывается
+ * при сборке payload, и Promise в JSON.stringify сериализовался бы в «{}» —
+ * бэкенд получал 422 «sources: Input should be a valid list». Пустой выбор
+ * или отсутствующий бокс → ['hh'] (прежнее поведение без мульти-источников).
+ */
+function sourcesFromBox(mode) {
+  const box = document.querySelector(`[data-source-box="${mode}"]`);
+  if (!box) return ['hh'];
+  const checked = box.querySelectorAll('input[type="checkbox"]:checked');
+  const sources = [...checked].map((el) => el.value);
+  return sources.length ? sources : ['hh'];
 }
 
 async function createTask(request, button, title) {

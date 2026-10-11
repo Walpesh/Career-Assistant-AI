@@ -1,0 +1,1 @@
+& python -m pytest C:/Users/walpe/OneDrive/Desktop/Career-Assistant-AI-v2/backend/tests -q --no-header -p no:cacheprovider --tb=short > C:/Users/walpe/OneDrive/Desktop/Career-Assistant-AI-v2/backend/pytest_final5.log 2>&1; exit $LASTEXITCODE

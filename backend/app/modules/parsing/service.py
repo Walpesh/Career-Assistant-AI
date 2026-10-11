@@ -241,7 +241,7 @@ class ParsingOrchestrator:
                 adapter=adapter,
                 base_url=base_url,
                 max_pages=max_pages,
-                source="auto",
+                source=source_name,
                 progress=report,
                 blacklist=blacklist,
             )
@@ -276,7 +276,7 @@ class ParsingOrchestrator:
             adapter=self.adapter,
             base_url=self.adapter.validate_search_url(search_url),
             max_pages=max_pages,
-            source="group",
+            source=self.sources[0],
             progress=progress or NullProgress(),
             blacklist=blacklist,
         )
@@ -300,7 +300,7 @@ class ParsingOrchestrator:
             user_id=user_id,
             hh_vacancy_id=hh_vacancy_id,
             url=vacancy_url,
-            source="manual",
+            source=self.sources[0],
             response=response,
             adapter=self.adapter,
             blacklist=blacklist,
