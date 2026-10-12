@@ -409,11 +409,13 @@ function renderQuotas(data) {
         : `${used} / ${quota.limit}`;
       const barWidth = unlimited ? '0%' : `${percent}%`;
 
+      // Ширина задаётся через CSSOM (как progress.js): CSP style-src 'self'
+      // блокирует атрибут style="…" в разметке.
       return `
         <li class="flex items-center gap-3">
           <span class="w-40 shrink-0 text-slate-400">${label}</span>
           <span class="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-800">
-            <span class="block h-full rounded-full ${barColor}" style="width: ${barWidth}"></span>
+            <span class="block h-full rounded-full ${barColor}" data-bar-width="${barWidth}"></span>
           </span>
           <span class="w-28 shrink-0 text-right tabular-nums text-slate-400">${value}</span>
         </li>`;
@@ -422,6 +424,10 @@ function renderQuotas(data) {
     .join('');
 
   els.billingQuotas.innerHTML = rows || '<li class="hint">Нет данных о квотах.</li>';
+  els.billingQuotas.querySelectorAll('[data-bar-width]').forEach((bar) => {
+    bar.style.width = bar.dataset.barWidth || '0%';
+    bar.removeAttribute('data-bar-width');
+  });
   els.billingResetsAt.textContent = data.resets_at
     ? `Обновление в ${formatDateTime(data.resets_at)}`
     : '';

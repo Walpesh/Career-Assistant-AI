@@ -172,6 +172,7 @@ async def enqueue_task(
     task_type: str,
     *,
     attempt: str | None = None,
+    defer_seconds: float = 0.0,
     pool: ArqRedis | None = None,
 ) -> str | None:
     """Поставить задачу в очередь Redis через ARQ (enqueue_job).
@@ -184,6 +185,9 @@ async def enqueue_task(
             дедупликация мешает пере-постановке: ключ ``arq:job:<task_type>:<id>``
             (или ``arq:result:...`` завершённого job'а) ещё жив в Redis, хотя
             сама задача в БД снова pending (восстановление после сбоя, resume).
+        defer_seconds: отложить запуск job'а на N секунд (используется при
+            пере-постановке из воркера, когда слоты семафора заняты: свежий
+            job получает новый счётчик попыток ARQ).
 
     Returns:
         Идентификатор job'а в Redis либо None, если задача уже была в очереди
@@ -206,9 +210,10 @@ async def enqueue_task(
     # Приоритет парсинга (docs/04 §6) задаётся score'ом в отсортированном
     # множестве Redis — самой очередью, без обращения к БД.
     offset = _priority_offset_ms(task_type)
-    if offset:
+    if offset or defer_seconds:
+        defer_ms = max(0.0, float(defer_seconds)) * 1000
         kwargs["_defer_until"] = datetime.fromtimestamp(
-            (timestamp_ms() - offset) / 1000, tz=timezone.utc
+            (timestamp_ms() + defer_ms - offset) / 1000, tz=timezone.utc
         )
 
     job = await redis.enqueue_job(_job_for_task_type(task_type), str(task_id), **kwargs)

@@ -381,17 +381,35 @@ async def generate_cover_letter(
 
     raw_text = await _generate(prompt, temperature=0.55, timeout=timeout)
     letter = _clean_letter(raw_text)
-    if len(letter) < LETTER_MIN_CHARS:
-        # Уточняющий запрос: просим модель дотянуть объём до требуемого.
-        retry_prompt = (
-            f"{prompt}\n\nПредыдущий вариант оказался короче {min_chars} символов. "
-            f"Напиши полноценное письмо объёмом {min_chars}–{max_chars} символов: "
-            "добавь конкретику об опыте кандидата и о том, что он даст компании."
-        )
-        retry_raw = await _generate(retry_prompt, temperature=0.55, timeout=timeout)
+    if not (min_chars <= len(letter) <= max_chars):
+        # Уточняющий запрос при отклонении от диапазона docs/05 §5 (в обе
+        # стороны: слишком короткое И слишком длинное письмо — по аналогии с
+        # повтором при невалидном JSON, docs/05 §7).
+        if len(letter) < min_chars:
+            hint = (
+                f"Предыдущий вариант оказался короче {min_chars} символов. "
+                f"Напиши полноценное письмо объёмом {min_chars}–{max_chars} символов: "
+                "добавь конкретику об опыте кандидата и о том, что он даст компании."
+            )
+        else:
+            hint = (
+                f"Предыдущий вариант оказался длиннее {max_chars} символов. "
+                f"Напиши сжатую версию объёмом {min_chars}–{max_chars} символов: "
+                "убери лишние детали и повторы, оставь самое важное."
+            )
+        retry_raw = await _generate(f"{prompt}\n\n{hint}", temperature=0.55, timeout=timeout)
         retry_letter = _clean_letter(retry_raw)
-        if len(retry_letter) > len(letter):
-            letter = retry_letter
+
+        def _distance(text: str) -> int:
+            """Дистанция длины до ближайшей границы диапазона (0 — в диапазоне)."""
+            if len(text) < min_chars:
+                return min_chars - len(text)
+            if len(text) > max_chars:
+                return len(text) - max_chars
+            return 0
+
+        # Кандидат в диапазоне предпочтительнее; иначе — более близкий к нему.
+        letter = min((letter, retry_letter), key=_distance)
 
     if len(letter) < 200:
         raise LLMError(f"Модель вернула слишком короткое письмо ({len(letter)} символов)")

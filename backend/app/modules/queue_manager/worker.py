@@ -221,11 +221,21 @@ def _slot_metric_group(group: str) -> str:
     return "llm" if group == LLM_SLOT_GROUP else "parsing"
 
 
+#: Сентинел: слот не получен, job пере-поставлен в очередь свежим job'ом
+#: (аргумент None означал бы «выполнить без слота» — это небезопасно).
+SLOT_REQUEUED = object()
+
+
 async def _acquire_slot(ctx: dict, group: str, limit: int, task_type: str, task_id: str):
     """Занять слот или вернуть задачу в очередь Redis (docs/04 §5).
 
-    Если слоты заняты, задача остаётся ``pending`` и job откладывается через
-    ``Retry(defer=...)`` — блокирующий воркер при этом освобождается.
+    Если слоты заняты, задача остаётся ``pending``, а ожидание не исчерпывает
+    ретраи ARQ (``max_tries``):
+
+    - с реальным Redis (production) ставится **свежий job** с новым счётчиком
+      попыток и ``defer`` — иначе при долгой занятости слотов ARQ выбрасывал
+      бы job после ``max_tries`` и задача навсегда оставалась ``pending``;
+    - без Redis (юнит-тесты, InProcess-слоты) — прежний ``Retry(defer=...)``.
     """
     slots = _slots(ctx)
     lease = await slots.acquire(group, limit)
@@ -233,9 +243,30 @@ async def _acquire_slot(ctx: dict, group: str, limit: int, task_type: str, task_
         set_semaphore_slots(_slot_metric_group(group), 1)
         return lease
 
-    from arq.worker import Retry
-
     from app.core.config import settings
+
+    redis = ctx.get("redis")
+    if redis is not None:
+        from app.modules.queue_manager.queues import enqueue_task
+
+        defer = max(2.0, settings.arq_poll_delay_seconds * 20)
+        await enqueue_task(
+            task_id,
+            task_type,
+            attempt=f"busy-{uuid.uuid4().hex[:8]}",
+            defer_seconds=defer,
+            pool=redis,
+        )
+        logger.info(
+            "Задача %s (%s): слоты группы %s заняты, job пере-поставлен (defer=%.1f с)",
+            task_id,
+            task_type,
+            group,
+            defer,
+        )
+        return SLOT_REQUEUED
+
+    from arq.worker import Retry
 
     logger.info(
         "Задача %s (%s): слоты группы %s заняты, возврат в очередь",
@@ -402,6 +433,8 @@ async def run_parsing_task(ctx: dict, task_id: str) -> dict | None:
         lease = await _acquire_slot(
             ctx, group, MAX_CONCURRENT_PARSERS_PER_USER, task.task_type, task_id
         )
+        if lease is SLOT_REQUEUED:
+            return None  # job пере-поставлен, текущий завершается
         try:
             if not await _start_task(session, task):
                 return None  # отменена или уже обработана
@@ -713,6 +746,8 @@ async def run_llm_task(ctx: dict, task_id: str) -> dict | None:
         lease = await _acquire_slot(
             ctx, LLM_SLOT_GROUP, MAX_CONCURRENT_LLM_WORKERS, task.task_type, task_id
         )
+        if lease is SLOT_REQUEUED:
+            return None  # job пере-поставлен, текущий завершается
         try:
             if not await _start_task(session, task):
                 return None  # отменена или уже обработана

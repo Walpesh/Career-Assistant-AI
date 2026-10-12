@@ -25,11 +25,11 @@
 
 ```
 .
-├── backend/     # FastAPI-приложение: app/modules/* (12 модулей Modular-Flow)
+├── backend/     # FastAPI-приложение: app/modules/* (12 модулей Modular-Flow), tests/ (30 файлов), tools/
 ├── frontend/    # SPA: HTML5 + Tailwind CSS + Vanilla JS (ES-модули), см. frontend/README.md
-├── docs/        # Спецификации проекта
+├── docs/        # Спецификации проекта (00–05)
 ├── deploy/      # deploy/nginx.conf — прод-раздача статики с CSP и nonce
-├── tests/       # Служебные нагрузочные данные (load)
+├── tests/       # locust-нагрузка (load/locustfile.py)
 └── tools/       # Служебные скрипты (UI smoke test)
 ```
 
@@ -115,7 +115,7 @@ python tools/ui_smoke_test.py
 
 ```powershell
 cd backend
-python -m pytest                      # 435 интеграционных тестов (БД career_assistant_test)
+python -m pytest                      # 671 интеграционный тест (БД career_assistant_test)
 python tools/live_smoke_test.py       # сквозной тест на живой БД + Ollama + hh.ru
 python tools/llm_direct_check.py      # прямой прогон LLM-этапов (анализ + письмо)
 python tools/filter_check.py          # лёгкая проверка фильтров парсинга (без сети и БД)

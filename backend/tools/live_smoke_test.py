@@ -221,7 +221,8 @@ async def test_profile(client: httpx.AsyncClient, headers: dict) -> None:
     t0 = time.time()
     r = await client.post(f"{PREFIX}/profile/convert-resume", headers=headers, timeout=300.0)
     dt = time.time() - t0
-    if check("POST /profile/convert-resume → 200 (реальный LLM)", r.status_code == 200, f"{r.status_code} {r.text[:300]}"):
+    if check("POST /profile/convert-resume → 202 (реальный LLM, async docs/03 §3)",
+             r.status_code in (200, 202), f"{r.status_code} {r.text[:300]}"):
         compact = r.json().get("compact_resume") or ""
         check("LLM: compact_resume непустой (>50 симв.)", len(compact) > 50, f"len={len(compact)}")
         check("LLM: compact_resume ≤ 2000 симв. (COMPACT_RESUME_MAX_CHARS)", len(compact) <= 2000, f"len={len(compact)}")
@@ -276,7 +277,9 @@ async def test_vacancy_crud(client: httpx.AsyncClient, headers: dict) -> dict:
     print(f"  спарсено: {v.get('title')} @ {v.get('company_name')} | зарплата {v.get('salary_from')}-{v.get('salary_to')}"
           f" | опыт: {v.get('experience')} | формат: {v.get('work_format')}")
     check("manual: hh_vacancy_id извлечён из ссылки", v.get("hh_vacancy_id") == "137866214", r.text[:200])
-    check("manual: source=manual", v.get("source") == "manual", r.text[:200])
+    # Мульти-источники (docs/04 §10): source — идентификатор площадки (hh),
+    # а не режим постановки; ручной ингест hh.ru сохраняет source="hh".
+    check("manual: source=hh (мульти-источники docs/04 §10)", v.get("source") == "hh", r.text[:200])
     check("manual: title извлечён", bool(v.get("title")), r.text[:200])
     check("manual: company_name извлечён", bool(v.get("company_name")), r.text[:200])
     check("manual: description_raw извлечён", len(v.get("description_raw") or "") > 100,
