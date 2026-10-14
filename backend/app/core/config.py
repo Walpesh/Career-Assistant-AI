@@ -4,7 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import model_validator
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 #: Значение JWT_SECRET по умолчанию, которое обязано быть изменено в production.
@@ -238,6 +238,34 @@ class Settings(BaseSettings):
     billing_webhook_max_age_seconds: int = 86400
     #: Максимальный размер тела вебхука, байт (защита от DoS разбором JSON).
     billing_webhook_max_body_bytes: int = 262_144
+
+    # --- Billing checkout / gateway credentials (docs/03 §11) ---
+    #: Публичный базовый URL фронтенда, на который перенаправляет шлюз после
+    #: оплаты (return/cancel URL платежной сессии).
+    front_base_url: str = "https://career-assistant-ai.com"
+
+    #: YooKassa: ID магазина (шопа) и секретный ключ для подписи запросов.
+    yookassa_shop_id: str = ""
+    yookassa_secret_key: str = ""
+
+    #: CloudPayments: публичный ID магазина и API-секрет. Имена переменных
+    #: окружения — CLOUDPAYMENTS_PUBLIC_ID / CLOUDPAYMENTS_API_SECRET
+    #: (альтернативы CLOUDPAYMENTS_SHOP_ID / CLOUDPAYMENTS_SECRET_KEY тоже
+    #: читаются — AliasChoices), потому что в панели CloudPayments ключи
+    #: называются PublicId и ApiPassword.
+    cloudpayments_shop_id: str = Field(
+        "", validation_alias=AliasChoices("cloudpayments_shop_id", "cloudpayments_public_id")
+    )
+    cloudpayments_secret_key: str = Field(
+        "", validation_alias=AliasChoices("cloudpayments_secret_key", "cloudpayments_api_secret")
+    )
+
+    #: Stripe: секретный ключ для серверной части, публичный ключ
+    #: (publishable key) для фронтенда и signing secret вебхука (whsec_…)
+    #: из панели Stripe — подпись Stripe-Signature считается именно им.
+    stripe_secret_key: str = ""
+    stripe_publishable_key: str = ""
+    stripe_webhook_secret: str = ""
 
     # --- Учёт прокси-трафика (Proxy Usage Logger, docs/02 §3.11) ---
     #: Стоимость 1 МБ прокси-трафика в копейках — для отчётности по себестоимости.

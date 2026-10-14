@@ -110,6 +110,13 @@ TIERS: dict[str, TierQuota] = {
 #: Тариф по умолчанию — для аккаунта без строки `subscriptions`.
 DEFAULT_TIER = "free"
 
+#: Валюты, тарифы и интервалы для каталога тарифов (docs/03 §11).
+PRICING: dict[str, dict[str, object]] = {
+    "free": {"price": 0.0, "currency": "RUB", "interval": "forever"},
+    "pro": {"price": 990.0, "currency": "RUB", "interval": "month"},
+    "enterprise": {"price": 3900.0, "currency": "RUB", "interval": "month"},
+}
+
 
 def available_tiers() -> list[dict]:
     """Каталог тарифов для публичного эндпоинта (docs/03 §11)."""
@@ -119,10 +126,15 @@ def available_tiers() -> list[dict]:
             "rank": quota.rank,
             "daily_quotas": quota.as_dict(),
             "unlimited": [kind for kind in QuotaKind.ALL if quota.is_unlimited(kind)],
+            "pricing": PRICING.get(name, PRICING["free"]),
         }
         for name, quota in sorted(TIERS.items(), key=lambda item: item[1].rank)
     ]
 
+
+def tier_pricing(tier: str) -> dict:
+    """Цена тарифа в рублях с валютой и интервалом."""
+    return PRICING.get((tier or "").strip().lower(), PRICING["free"])
 
 def quota_for(tier: str | None) -> TierQuota:
     """Квоты тарифа; неизвестное имя откатывается к free (fail-safe).

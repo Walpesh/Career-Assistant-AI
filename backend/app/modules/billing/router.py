@@ -4,6 +4,7 @@
     GET  /billing/tiers             — каталог тарифов и их суточные квоты;
     GET  /billing/usage             — текущий тариф и расход квот за сутки;
     GET  /billing/subscription      — состояние подписки пользователя;
+    POST /billing/checkout          — платёжная сессия у провайдера (Bearer);
     POST /billing/webhook/{provider} — приём платёжного вебхука (без Bearer).
 
 Вебхук — единственный публичный (не требующий авторизации) эндпоинт
@@ -22,13 +23,14 @@ from app.core.errors import AppError
 from app.db.models import Subscription, User
 from app.db.session import get_db
 from app.modules.auth.deps import get_current_user
-from app.modules.billing.providers import PROVIDERS
+from app.modules.billing.providers import PROVIDERS, create_payment_session
 from app.modules.billing.service import (
     get_tier,
     process_webhook,
     quota_summary,
     tiers_catalog,
 )
+from app.modules.billing.tiers import resolve_tier, tier_pricing
 
 __all__ = ["router"]
 
@@ -69,6 +71,46 @@ async def subscription(
         "external_id": row.external_id if row is not None else None,
         "current_period_end": row.current_period_end if row is not None else None,
         "canceled_at": row.canceled_at if row is not None else None,
+    }
+
+
+@router.post(
+    "/checkout",
+    summary="Создать сессию оплаты для тарифа (YooKassa по умолчанию)",
+    status_code=200,
+)
+async def create_checkout(
+    payload: dict,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Принять ``tier`` (или ``plan``) и вернуть ``confirmation_url``.
+
+    Клиент после успешной оплаты будет перенаправлён на
+    ``front_base_url + "/pricing/success"``.
+    """
+    tier = str(payload.get("tier") or payload.get("plan") or "").strip().lower()
+    if not tier:
+        raise AppError(400, "Поле ``tier`` (или ``plan``) обязательно", "BILLING_TIER_REQUIRED")
+    if not settings.billing_enabled:
+        raise AppError(402, "Биллинг выключен на сервере", "BILLING_DISABLED")
+
+    normalized = resolve_tier(tier)
+    pricing = tier_pricing(normalized)
+
+    session = await create_payment_session(
+        settings.billing_provider,
+        user.id,
+        normalized,
+        pricing,
+    )
+    return {
+        "tier": normalized,
+        "price": pricing.get("price"),
+        "currency": pricing.get("currency"),
+        "interval": pricing.get("interval"),
+        "confirmation_url": session.get("confirmation_url"),
+        "payment_id": session.get("payment_id"),
     }
 
 

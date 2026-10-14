@@ -25,13 +25,18 @@ stripe         Подпись ``t=…,v1=…`` в заголовке ``Stripe-Si
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import json
 import time
+import uuid
 from dataclasses import dataclass
 
+import httpx
+
 from app.core.config import settings
+from app.core.errors import AppError
 
 __all__ = [
     "PROVIDERS",
@@ -256,66 +261,297 @@ _HANDLERS = {
     "stripe": (_verify_stripe, parse_stripe),
 }
 
-#: Провайдер → заголовки с подписью (регистр заголовков не важен).
+#: Провайдер → заголовок с подписью.
 _SIGNATURE_HEADERS = {
-    "yookassa": ("x-signature",),
-    "cloudpayments": ("content-hmac", "x-hmac"),
-    "stripe": ("stripe-signature",),
+    "yookassa": "X-Signature",
+    "cloudpayments": "Content-HMAC",
+    "stripe": "Stripe-Signature",
 }
 
 
-def _signature_header(provider: str, headers) -> str:
-    """Значение заголовка с подписью для конкретного провайдера."""
-    lookup = {str(key).lower(): value for key, value in (headers or {}).items()}
-    for name in _SIGNATURE_HEADERS[provider]:
-        value = lookup.get(name)
+def _header(headers, name: str) -> str:
+    """Достать заголовок из маппинга (dict) или starlette Headers.
+
+    Starlette-Headers уже case-insensitive; для обычного dict делаем
+    поиск без учёта регистра, чтобы не зависеть от написания ключа.
+    """
+    getter = getattr(headers, "get", None)
+    if getter is not None:
+        value = getter(name)
         if value:
+            return str(value)
+    try:
+        items = headers.items()
+    except AttributeError:
+        return ""
+    lowered = name.lower()
+    for key, value in items:
+        if str(key).lower() == lowered and value:
             return str(value)
     return ""
 
 
 def verify_signature(
-    provider: str, body: bytes, headers, *, secret: str | None = None
+    provider: str,
+    body: bytes,
+    headers,
+    *,
+    secret: str | None = None,
 ) -> PaymentEventData | None:
-    """Проверить подпись вебхука и разобрать его в нормализованное событие.
+    """Проверить подпись вебхука и вернуть нормализованное событие.
 
-    Args:
-        provider: ``yookassa`` / ``cloudpayments`` / ``stripe``.
-        body: сырое тело запроса — подпись считается именно по нему, а не по
-            пересобранному JSON: у шлюзов каноническая сериализация.
-        headers: заголовки запроса (для поиска подписи).
-        secret: секрет шлюза; по умолчанию ``BILLING_WEBHOOK_SECRET``.
+    Аргументы:
+        provider: Имя провайдера (``yookassa`` | ``cloudpayments`` | ``stripe``).
+        body: Сырое тело запроса (подпись считается именно от него).
+        headers: Маппинг заголовков (dict или starlette Headers).
+        secret: Ключ шлюза; если не передан — ``settings.billing_webhook_secret``,
+            а для Stripe дополнительно ``settings.stripe_webhook_secret``
+            (набор ключей только расширяется: принимавшиеся подписи
+            остаются принятыми).
 
-    Returns:
-        Нормализованное событие либо ``None``, если подпись не сошлась,
-        провайдер неизвестен, секрет не настроен либо тело не разобралось.
-        Вызывающий код превращает ``None`` в 400/401: «пропустить событие
-        молча» здесь означало бы принять неоплаченный платёж.
+    Возвращает:
+        Нормализованное событие либо ``None``, если подпись неверна,
+        секрет не настроен или провайдер не поддерживается.
     """
     normalized = (provider or "").strip().lower()
-    if normalized not in PROVIDERS:
+    handler = _HANDLERS.get(normalized)
+    if handler is None:
         return None
+    verify, parse = handler
 
-    key = settings.billing_webhook_secret if secret is None else secret
-    if not key:
-        # Секрет не настроен → подпись проверить нечем. Принять событие значило
-        # бы разрешить любому отправителю выдать себя за платёжный шлюз.
-        return None
+    if secret is not None:
+        keys = [secret]
+    else:
+        keys = [settings.billing_webhook_secret]
+        if normalized == "stripe":
+            keys.append(settings.stripe_webhook_secret)
 
-    verifier, parser = _HANDLERS[normalized]
-    if not verifier(body, key, _signature_header(normalized, headers)):
+    provided = _header(headers, _SIGNATURE_HEADERS[normalized])
+    if not provided or not any(key and verify(body, key, provided) for key in keys):
         return None
 
     try:
-        payload = json.loads(body or b"{}")
-    except (TypeError, ValueError):
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
         return None
     if not isinstance(payload, dict):
         return None
+    return parse(payload)
 
-    try:
-        return parser(payload)
-    except Exception:  # noqa: BLE001 — кривой payload не должен ронять сервис
-        return None
-    except ValueError:
-        return False
+
+# --- Payment sessions (checkout) ----------------------------------------------
+
+GATEWAY_BASE_URL: dict[str, str] = {
+    "yookassa": "https://api.yookassa.ru/v3",
+    "cloudpayments": "https://api.cloudpayments.ru",
+    "stripe": "https://api.stripe.com",
+}
+
+GATEWAY_PAYMENT_PATH: dict[str, str] = {
+    "yookassa": "/v3/payments",
+    "cloudpayments": "/payments",
+    "stripe": "/v1/checkout/sessions",
+}
+
+
+def _kopeks(value: object) -> int:
+    """Convert a price (rubles) into integer kopecks."""
+    return int(round(float(value or 0.0) * 100))
+
+
+def _cloudpayments_signature(
+    shop_id: str,
+    payment_type: str,
+    amount: str,
+    currency: str,
+    description: str,
+    signature_version: str,
+    redirect_url: str,
+    server_url: str,
+) -> str:
+    """Sign a CloudPayments create-payment request (same algorithm as the gateway)."""
+    message = f"{shop_id}{payment_type}{amount}{currency}{description}{signature_version}{redirect_url}{server_url}"
+    return hmac.new(
+        settings.cloudpayments_secret_key.encode("utf-8"),
+        message.encode("utf-8"),
+        hashlib.sha1,
+    ).hexdigest().upper()
+
+
+def _payment_metadata(user_id: uuid.UUID, tier: str) -> dict:
+    """Gateway-visible metadata (user_id / tier) consumed by the webhook handler."""
+    return {"user_id": str(user_id), "tier": tier}
+
+
+async def create_payment_session(
+    provider: str,
+    user_id: uuid.UUID,
+    tier: str,
+    pricing: dict,
+    return_url: str | None = None,
+) -> dict:
+    """Создать сессию оплаты в активном провайдере.
+
+    Возвращает ``confirmation_url`` (адрес переадресации) и ``payment_id``.
+    """
+    provider = (provider or "").strip().lower()
+    if provider not in PROVIDERS:
+        raise AppError(
+            400,
+            f"Провайдер оплаты не поддерживается: {provider}",
+            "PAYMENT_PROVIDER_INVALID",
+        )
+
+    amount_kopeks = _kopeks(pricing.get("price") if isinstance(pricing, dict) else pricing)
+    metadata = _payment_metadata(user_id, tier)
+    return_url = return_url or f"{settings.front_base_url}/pricing/success"
+
+    if provider == "yookassa":
+        return await _create_yookassa_payment(amount_kopeks, metadata, return_url, tier)
+    if provider == "cloudpayments":
+        return await _create_cloudpayments_payment(amount_kopeks, metadata, return_url, tier, user_id)
+    if provider == "stripe":
+        return await _create_stripe_checkout_session(amount_kopeks, metadata, return_url, tier)
+
+    raise AppError(
+        500,
+        f"Не реализован способ создания сессии для провайдера: {provider}",
+        "PAYMENT_PROVIDER_ERROR",
+    )
+
+
+async def _create_yookassa_payment(
+    amount_kopeks: int,
+    metadata: dict,
+    return_url: str,
+    tier: str,
+) -> dict:
+    if not (settings.yookassa_shop_id and settings.yookassa_secret_key):
+        raise AppError(
+            503,
+            "YooKassa не настроен на сервере (SHOP_ID / SECRET_KEY)",
+            "PAYMENT_GATEWAY_UNAVAILABLE",
+        )
+    auth = base64.b64encode(
+        f"{settings.yookassa_shop_id}:{settings.yookassa_secret_key}".encode()
+    ).decode("ascii")
+    payload = {
+        "amount": {"value": str(amount_kopeks), "currency": "RUB"},
+        "confirmation": {"type": "redirect", "return_url": return_url},
+        "description": f"Абонемент {tier.title()}",
+        "metadata": metadata,
+    }
+    headers = {
+        "Authorization": f"Basic {auth}",
+        "Idempotence-Key": str(uuid.uuid4()),
+        "Content-Type": "application/json",
+    }
+    url = f"{GATEWAY_BASE_URL['yookassa']}{GATEWAY_PAYMENT_PATH['yookassa']}"
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.post(url, json=payload, headers=headers)
+    if response.status_code in (200, 201):
+        data = response.json()
+        confirmation = data.get("confirmation") or {}
+        return {
+            "confirmation_url": confirmation.get("confirmation_url"),
+            "payment_id": data.get("id"),
+        }
+    detail = (response.json() or {}).get("description") or response.text[:300]
+    raise AppError(502, f"YooKassa: {detail}", "PAYMENT_GATEWAY_ERROR")
+
+
+async def _create_cloudpayments_payment(
+    amount_kopeks: int,
+    metadata: dict,
+    return_url: str,
+    tier: str,
+    user_id: uuid.UUID,
+) -> dict:
+    if not (settings.cloudpayments_shop_id and settings.cloudpayments_secret_key):
+        raise AppError(
+            503,
+            "CloudPayments не настроен на сервере (SHOP_ID / SECRET_KEY)",
+            "PAYMENT_GATEWAY_UNAVAILABLE",
+        )
+    amount = str(amount_kopeks)
+    shop_id = settings.cloudpayments_shop_id
+    signature = _cloudpayments_signature(
+        shop_id,
+        "sale",
+        amount,
+        "RUB",
+        f"Абонемент {tier}",
+        "HmacSHA1",
+        return_url,
+        f"{settings.front_base_url}/api/v1/billing/return",
+    )
+    payload = {
+        "shopId": shop_id,
+        "paymentType": "sale",
+        "amount": {"value": amount, "currency": "RUB"},
+        "description": f"Абонемент {tier}",
+        "redirectUrl": return_url,
+        "serverUrl": f"{settings.front_base_url}/api/v1/billing/return",
+        "customer": {"email": f"user-{user_id}@example.com"},
+        "signature": signature,
+        "signatureVersion": "HmacSHA1",
+    }
+    headers = {"Content-Type": "application/json"}
+    url = f"{GATEWAY_BASE_URL['cloudpayments']}{GATEWAY_PAYMENT_PATH['cloudpayments']}"
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.post(url, json=payload, headers=headers)
+    if response.status_code in (200, 201):
+        data = response.json()
+        payment = data.get("payment") or data
+        return {
+            "confirmation_url": payment.get("redirectUrl") or payment.get("payUrl") or "",
+            "payment_id": payment.get("id") or payment.get("paymentId") or "",
+        }
+    detail = (response.json() or {}).get("message") or response.text[:300]
+    raise AppError(502, f"CloudPayments: {detail}", "PAYMENT_GATEWAY_ERROR")
+
+
+async def _create_stripe_checkout_session(
+    amount_kopeks: int,
+    metadata: dict,
+    return_url: str,
+    tier: str,
+) -> dict:
+    if not settings.stripe_secret_key:
+        raise AppError(
+            503,
+            "Stripe не настроен на сервере (SECRET_KEY)",
+            "PAYMENT_GATEWAY_UNAVAILABLE",
+        )
+    headers = {
+        "Authorization": f"Bearer {settings.stripe_secret_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "mode": "payment",
+        "line_items": [
+            {
+                "price_data": {
+                    "currency": "rub",
+                    "product_data": {"name": f"Абонемент {tier.title()}"},
+                    "unit_amount": amount_kopeks,
+                }
+            }
+        ],
+        "success_url": (
+            f"{settings.front_base_url}/pricing/success?session_id={{CHECKOUT_SESSION_ID}}"
+        ),
+        "cancel_url": f"{settings.front_base_url}/pricing",
+        "metadata": metadata,
+    }
+    url = f"{GATEWAY_BASE_URL['stripe']}{GATEWAY_PAYMENT_PATH['stripe']}"
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.post(url, json=payload, headers=headers)
+    if response.status_code in (200, 201):
+        data = response.json()
+        return {
+            "confirmation_url": data.get("url"),
+            "payment_id": data.get("id"),
+        }
+    detail = (response.json() or {}).get("error") or response.text[:300]
+    raise AppError(502, f"Stripe: {detail}", "PAYMENT_GATEWAY_ERROR")
