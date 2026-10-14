@@ -217,7 +217,14 @@ export const api = {
   /* --- Billing (docs/03 §11) --- */
   billingTiers: () => request('GET', '/billing/tiers', undefined, { skipAuth: true }),
   billingUsage: () => request('GET', '/billing/usage'),
-  billingSubscription: () => request('GET', '/billing/subscription')
+  billingSubscription: () => request('GET', '/billing/subscription'),
+  /**
+   * Создать платёжную сессию для тарифа (docs/03 §11 «POST /billing/checkout»).
+   * @param {string} tier — 'pro' | 'enterprise'
+   * @returns {Promise<{tier: string, price: number, currency: string, interval: string,
+   *   confirmation_url: string, payment_id: string}>} ссылка на страницу оплаты шлюза
+   */
+  billingCheckout: (tier) => request('POST', '/billing/checkout', { tier })
 };
 
 /** Заголовки авторизации (access-токен хранится только в памяти). */

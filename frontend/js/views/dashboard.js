@@ -17,6 +17,7 @@ import { taskStatusBadge, TASK_TYPE_LABELS } from '../components/badges.js';
 import { formatDateTime, escapeHtml, clamp } from '../core/utils.js';
 import { confirmDialog } from '../components/overlay.js';
 import { mapAutoFilters } from '../core/filter-mapping.js';
+import { mountPricingTrigger } from './pricing.js';
 
 const HH_SEARCH_URL = /^https?:\/\/([\w-]+\.)*hh\.ru\//i;
 const HH_VACANCY_URL = /^https?:\/\/([\w-]+\.)*hh\.ru\/vacancy\/\d+/i;
@@ -34,6 +35,10 @@ export async function mount() {
   mounted = true;
 
   document.getElementById('view-dashboard').innerHTML = await loadPartial('dashboard');
+
+  // Раздел «Тарифы и подписка» (docs/03 §11): кнопка в шапке дашборда
+  // открывает модалку с каталогом тарифов и оплатой POST /billing/checkout.
+  mountPricingTrigger(document.querySelector('#view-dashboard header'));
 
   els = {
     modeButtons: [...document.querySelectorAll('#parsing-modes [data-mode]')],

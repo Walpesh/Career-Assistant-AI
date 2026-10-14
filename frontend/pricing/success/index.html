@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex" />
+  <title>Переход к подтверждению оплаты — Career-Assistant-AI</title>
+
+  <!--
+    Точка возврата платежа: FRONT_BASE_URL + /pricing/success
+    (docs/03_API_CONTRACTS.md §11). nginx отдаёт этот файл для пути
+    /pricing/success через try_files $uri/ + index, а meta-refresh
+    перенаправляет на каноническую страницу подтверждения.
+  -->
+  <meta http-equiv="refresh" content="0; url=/pricing/success.html" />
+  <link rel="canonical" href="/pricing/success.html" />
+  <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+  <link rel="stylesheet" href="/css/styles.min.css"
+        integrity="sha384-2SLZh2a5/to/R3IcAiLTdp2YZBq3v4VQ38qasmZsAsF9dgveL01VpVH0eMhJvaI1"
+        crossorigin="anonymous" />
+</head>
+<body class="h-full bg-slate-950 font-sans text-slate-100 antialiased">
+  <main class="flex min-h-full flex-col items-center justify-center px-4 py-16 text-center">
+    <h1 class="text-2xl font-bold">Оплата прошла успешно</h1>
+    <p class="mt-3 text-sm leading-relaxed text-slate-400">
+      Если страница не открылась автоматически, перейдите по ссылке:
+    </p>
+    <p class="mt-6">
+      <a href="/pricing/success.html" class="btn-primary">Показать подтверждение оплаты</a>
+    </p>
+  </main>
+</body>
+</html>

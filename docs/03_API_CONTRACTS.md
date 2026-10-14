@@ -496,6 +496,7 @@ Refresh-cookie удаляется вместе с аккаунтом.
 | GET | `/billing/tiers` | Каталог тарифов и суточных квот | Нет |
 | GET | `/billing/usage` | Текущий тариф и расход квот за сутки | Да |
 | GET | `/billing/subscription` | Состояние подписки | Да |
+| POST | `/billing/checkout` | Создать платёжную сессию и получить URL оплаты | Да |
 | POST | `/billing/webhook/{provider}` | Вебхук платёжного шлюза | Подпись HMAC |
 
 ### Тарифы и суточные квоты
@@ -507,6 +508,15 @@ Refresh-cookie удаляется вместе с аккаунтом.
 | `free` | 5 | 10 | 30 | 200 МБ |
 | `pro` | 50 | 200 | 1000 | 5000 МБ |
 | `enterprise` | без лимита | без лимита | без лимита | без лимита |
+
+Стоимость (`GET /billing/tiers` → поле `pricing` каждого тарифа,
+источник — `billing/tiers.py::PRICING`):
+
+| Тариф | Цена | Интервал |
+|-------|------|----------|
+| `free` | 0 ₽ | навсегда |
+| `pro` | 990 ₽ | в месяц |
+| `enterprise` | 3900 ₽ | в месяц |
 
 Индивидуальные переопределения задаются в `subscriptions.daily_*`
 (enterprise-контракты). Отсутствие строки `subscriptions` равносильно `free`,
@@ -534,6 +544,61 @@ Refresh-cookie удаляется вместе с аккаунтом.
 
 Начисление атомарно (`INSERT … ON CONFLICT DO UPDATE … WHERE`), поэтому
 параллельные запросы физически не могут превысить лимит.
+
+### POST /billing/checkout
+
+Создаёт платёжную сессию у активного провайдера (`BILLING_PROVIDER`:
+`yookassa` | `cloudpayments` | `stripe`) и возвращает URL страницы оплаты.
+Авторизация — Bearer (§2): платёж привязывается к текущему пользователю.
+
+**Запрос** (`Content-Type: application/json`):
+
+```json
+{ "tier": "pro" }
+```
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `tier` | string | Один из `free` \| `pro` \| `enterprise` (алиас `plan`, регистр не важен) |
+
+**Ответ `200 OK`:**
+
+```json
+{
+  "tier": "pro",
+  "price": 990.0,
+  "currency": "RUB",
+  "interval": "month",
+  "confirmation_url": "https://yookassa.ru/payment/…",
+  "payment_id": "yg-…"
+}
+```
+
+| Поле | Описание |
+|------|----------|
+| `confirmation_url` | URL страницы оплаты шлюза — браузер нужно перенаправить на него (`window.location.assign(url)`) |
+| `payment_id` | Идентификатор платёжной сессии у провайдера (для сверки с вебхуком) |
+| `price` / `currency` / `interval` | Цена сессии из каталога тарифов (`RUB`, `month` / `forever`) |
+
+После успешной оплаты шлюз перенаправляет пользователя на
+`FRONT_BASE_URL + /pricing/success` (страница подтверждения —
+`frontend/pricing/success.html`). **Тариф применяется только после
+подтверждения вебхуком** (см. `POST /billing/webhook/{provider}` ниже):
+синхронный ответ страницы оплаты оплатой не считается.
+
+**Ошибки** (единый формат §1):
+
+| Код | `error_code` | Условие |
+|-----|--------------|---------|
+| `400` | `BILLING_TIER_REQUIRED` | В теле нет поля `tier` (или `plan`) |
+| `401` | — | Нет либо просрочен Bearer-токен (§2) |
+| `402` | `BILLING_DISABLED` | Биллинг выключен на сервере (`BILLING_ENABLED=false`) |
+| `502` | `PAYMENT_GATEWAY_ERROR` | Платёжный шлюз вернул ошибку |
+| `503` | `PAYMENT_GATEWAY_UNAVAILABLE` | Ключи выбранного провайдера не настроены |
+
+Фронтенд-клиент: `api.billingCheckout(tier)` (`frontend/js/core/api.js`),
+кнопка «Оплатить» в модалке «Тарифы и подписка»
+(`frontend/js/views/pricing.js`).
 
 ### POST /billing/webhook/{provider}
 

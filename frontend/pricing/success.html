@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="ru" class="h-full">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex" />
+  <meta name="description" content="Оплата тарифа принята — Career-Assistant-AI" />
+  <title>Оплата прошла успешно — Career-Assistant-AI</title>
+  <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+
+  <!--
+    Страница возврата платёжного шлюза (docs/03 §11 «POST /billing/checkout»):
+    FRONT_BASE_URL + /pricing/success. Путь /pricing/success отдаёт
+    frontend/pricing/success/index.html (nginx try_files $uri/ + index),
+    а он meta-refresh'ем перенаправляет сюда, на /pricing/success.html.
+    Та же собранная статика, что и в index.html, с SRI-хэшем.
+  -->
+  <link rel="stylesheet" href="/css/styles.min.css"
+        integrity="sha384-2SLZh2a5/to/R3IcAiLTdp2YZBq3v4VQ38qasmZsAsF9dgveL01VpVH0eMhJvaI1"
+        crossorigin="anonymous" />
+  <link rel="preload" href="/fonts/inter-latin.3100e775.woff2" as="font" type="font/woff2"
+        integrity="sha384-l0ql7Q1zqvX5klAVRwYjcMVCkCxg5dMTdghsIlC3pYkX6wwEHerh2bP/4yAao3Im"
+        crossorigin="anonymous" />
+  <link rel="preload" href="/fonts/inter-cyrillic.71d5ee93.woff2" as="font" type="font/woff2"
+        integrity="sha384-0TIui+vzWhVZMl7iUvLEvfLe0BvgafwfPJsBipXepNH7XIVkp1kGdXEZmLw5x82g"
+        crossorigin="anonymous" />
+</head>
+<body class="h-full bg-slate-950 font-sans text-slate-100 antialiased">
+  <main class="flex min-h-full flex-col items-center justify-center px-4 py-16 text-center">
+    <img src="/assets/favicon.svg" alt="" width="56" height="56"
+         class="mb-6 h-14 w-14 rounded-2xl shadow-glow" aria-hidden="true" />
+
+    <p class="text-xs font-semibold uppercase tracking-[0.3em] text-emerald-300">Оплата принята</p>
+    <h1 class="mt-3 text-2xl font-bold sm:text-3xl">Спасибо за оплату!</h1>
+    <p class="mt-3 max-w-md text-sm leading-relaxed text-slate-400">
+      Мы получили платёж и обновляем ваш тариф. Обычно это занимает несколько минут:
+      как только платёжный шлюз подтвердит транзакцию, суточные квоты тарифа
+      увеличатся автоматически — ничего подтверждать дополнительно не нужно.
+    </p>
+
+    <p class="mt-6 max-w-md rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-xs text-indigo-200">
+      Тариф не обновился спустя 15 минут? Напишите в поддержку — проверим платёж
+      по идентификатору транзакции (payment_id).
+    </p>
+
+    <div class="mt-8 flex flex-wrap items-center justify-center gap-3">
+      <a href="/" class="btn-primary">Вернуться в приложение</a>
+      <a href="/" class="btn-secondary">К тарифам и квотам</a>
+    </div>
+
+    <noscript>
+      <p class="mt-6 rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-xs text-rose-200">
+        Для работы интерфейса Career-Assistant-AI включите JavaScript.
+      </p>
+    </noscript>
+  </main>
+</body>
+</html>
